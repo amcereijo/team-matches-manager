@@ -6,8 +6,8 @@ export type ClubType = {
 	matches?: Game[]
 };
 
-const clubs: ClubType[] = [
-	{code: 0, name: "Filtro Club ..."},
+export const CLUBS: ClubType[] = [
+	// {code: 0, name: "Filtro Club ..."},
 
 	{code: 332, name: "ALCALA PA"},
 	{code: 454, name: "50 PROJECT EP"},
@@ -156,9 +156,14 @@ const clubs: ClubType[] = [
 	{code: 394, name: "VIRGEN DE EUROPA"}
 ];
 
+export const CLUBS_MAP = CLUBS.reduce((acc, club) => {
+	acc[club.code] = club;
+	return acc;
+}, {} as {[key: number]: ClubType});
+
+
 export function getClubName(code: number): string {
-	const club = clubs.find((club) => club.code === code);
+	const club = CLUBS_MAP[code]
 	return club ? club.name : "Club no encontrado";
 }
 
-export default clubs;

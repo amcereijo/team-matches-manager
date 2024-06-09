@@ -6,6 +6,7 @@ import styles from './styles';
 import { TouchableOpacity } from 'react-native-gesture-handler';
 import whats48 from '../../assets/icons8-whatsapp-48.png';
 import { openWhatsapp } from '../../services/whatsapp';
+import { getClubCode } from '../../services/team';
 
 /**
  * Return date in forma DDD, DD/MM/YYYY
@@ -65,11 +66,15 @@ const MatchesTable = () => {
   const [games, setGames] = useState<Game[] | null>(null);
 
   useEffect(() => {
-    if (!games) {
-      getMatches()
-        .then(data => setGames(data))
-        .catch(error => console.error(error));
-    }
+    const setMatches = async () => {
+      const clubCode = await getClubCode();
+      if (!games) {
+        getMatches(clubCode)
+          .then(data => setGames(data))
+          .catch(error => console.error(error));
+      }
+    };
+    setMatches();
   }, []);
 
   return (

@@ -5,7 +5,6 @@ import axios from 'axios';
 import FormData from 'form-data';
 import { load } from 'cheerio';
 import {LOCATION_MAP} from '../constants/locations';
-import { getTeamCode } from './team';
 
 export type Game = {
   league: string | null,
@@ -17,7 +16,7 @@ export type Game = {
   map: string | null,
 }
 
-export async function getMatches(team = getTeamCode()): Promise<Game[]> {
+export async function getMatches(clubCode: number): Promise<Game[]> {
   const url = 'https://ns3104249.ip-54-37-85.eu/shared/portales_files/agenda_portales.php';
 
   const form = new FormData();
@@ -25,7 +24,7 @@ export async function getMatches(team = getTeamCode()): Promise<Game[]> {
   form.append('idm', 1);
   form.append('id_temp', 21);
 
-  console.log('Fetching matches...');
+  console.log('Fetching matches for club', clubCode);
   const response = await axios.post(
     url,
     form,
@@ -42,7 +41,7 @@ export async function getMatches(team = getTeamCode()): Promise<Game[]> {
   $('.fila_agenda').each((i, el: any) => {
     const paramGame = el.attribs['param_game'];
 
-    if(String(paramGame).match(team)) {
+    if(String(paramGame).match(clubCode.toString())) {
       const location = <string> $(el.childNodes[19]).html();
       const map = LOCATION_MAP[location];
 

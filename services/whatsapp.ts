@@ -1,6 +1,6 @@
 import { Linking } from "react-native";
 import { Game } from "./fmp";
-import { getTeamName } from "./team";
+import { getClubname } from "./team";
 
 const formatDate = (date?: string) => {
   if (!date) return '';
@@ -25,7 +25,7 @@ function createMessages(game: Game) {
   text += '\n\n1.';
   text += '\n\nPorteros:';
   text += '\n\nDelegado:';
-  if ((game.local || '').match(getTeamName())) {
+  if ((game.local || '').match(getClubname())) {
     text += '\nAnotador:';
   }
   text += '\n\n';
