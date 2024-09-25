@@ -3,8 +3,10 @@ global.Buffer = Buffer;
 
 import axios from 'axios';
 import FormData from 'form-data';
-import { load } from 'cheerio';
+// import { load } from 'cheerio';
+import { load } from 'react-native-cheerio';
 import {LOCATION_MAP} from '../constants/locations';
+import he from 'he';
 
 export type Game = {
   league: string | null,
@@ -17,7 +19,7 @@ export type Game = {
 }
 
 export async function getMatches(clubCode: number): Promise<Game[]> {
-  const url = 'https://ns3104249.ip-54-37-85.eu/shared/portales_files/agenda_portales.php';
+  const url = 'https://sidgad.cloud/shared/portales_files/agenda_portales.php';
 
   const form = new FormData();
   form.append('cliente', 'fmp');
@@ -42,15 +44,15 @@ export async function getMatches(clubCode: number): Promise<Game[]> {
     const paramGame = el.attribs['param_game'];
 
     if(String(paramGame).match(clubCode.toString())) {
-      const location = <string> $(el.childNodes[19]).html();
+      const location = decodeHtml($(el.childNodes[19]).html());
       const map = LOCATION_MAP[location];
 
       games.push({
         league: $((el.childNodes[3]).childNodes[0]).html(),
-        date: $(el.childNodes[5]).html(),
-        time: $(el.childNodes[7]).html(),
-        local: $(el.childNodes[11]).html(),
-        visit: $(el.childNodes[15]).html(),
+        date: decodeHtml($(el.childNodes[5]).html()),
+        time: decodeHtml($(el.childNodes[7]).html()),
+        local: decodeHtml($(el.childNodes[11]).html()),
+        visit: decodeHtml($(el.childNodes[15]).html()),
         location: location,
         map: map ? map : ''
       });
@@ -58,5 +60,12 @@ export async function getMatches(clubCode: number): Promise<Game[]> {
   });
 
   return games;
+}
+
+function decodeHtml(html: string): string {
+  if(html) {
+    return he.decode(html);
+  }
+  return '';
 }
 

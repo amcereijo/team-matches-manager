@@ -52,7 +52,7 @@ const formatDate = (date?: string, time?: string) => {
 const Loading = () => (
   <View style={styles.noMatchesText}>
     <ActivityIndicator size="large" color="#0000ff" />
-    <Text>Cargando pórximos partidos...</Text>
+    <Text>Cargando próximos partidos...</Text>
   </View>
 );
 
