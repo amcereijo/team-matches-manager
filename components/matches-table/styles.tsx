@@ -22,6 +22,12 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     marginBottom: 5,
   },
+  matchTeamNoDateText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 5,
+    color: 'red',
+  },
   maatchButton: {
     alignSelf: 'flex-end',
   },

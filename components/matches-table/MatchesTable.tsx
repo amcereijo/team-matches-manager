@@ -31,23 +31,34 @@ const formatDate = (date?: string, time?: string) => {
   return dateObj.toLocaleDateString('es-ES', options);
 }
 
-  const CustomRow = ({ index, data }: { index: number; data: Game}) => (
-    <View
-        style={index % 2 === 0 ? { ...styles.matchRow, backgroundColor: '#F7F6E7' } : styles.matchRow}>
 
-      <Text style={styles.matchTeamText}>{`${data.league} - ${formatDate(data.date!, data.time!)}`}</Text>
-      <Text>{`${data.local} vs ${data.visit}`}</Text>
-      <Text>{`Pista: ${data.location}`}</Text>
-      <TouchableOpacity
-        style={styles.sendWhatsButton}
-        onPress={async () => {
-          await openWhatsapp(data);
-        }}>
-        <Image alt='Enviar por whatsapp' source={whats48} style={{ width: 24, height: 24 }} />
-        <Text style={{ color: 'white', marginLeft: 2 }}>Enviar</Text>
-      </TouchableOpacity>
-    </View>
-  );
+const getDateBlock = (date: string, time: string) => {
+  const formattedDate = formatDate(date, time);
+
+  if (formattedDate) {
+    return <Text style={styles.matchTeamText}>{`${formatDate(date, time)}`}</Text>
+  }
+
+  return <Text style={styles.matchTeamNoDateText}>Sin fecha y hora</Text>
+}
+
+const CustomRow = ({ index, data }: { index: number; data: Game}) => (
+  <View
+      style={index % 2 === 0 ? { ...styles.matchRow, backgroundColor: '#F7F6E7' } : styles.matchRow}>
+    {/* <Text style={styles.matchTeamText}>{`${data.league} - ${getDateBlock(data.date!, data.time!)}`}</Text> */}
+    <Text style={styles.matchTeamText}>{`${data.league} - `}{getDateBlock(data.date!, data.time!)}</Text>
+    <Text>{`${data.local} vs ${data.visit}`}</Text>
+    <Text>{`Pista: ${data.location}`}</Text>
+    <TouchableOpacity
+      style={styles.sendWhatsButton}
+      onPress={async () => {
+        await openWhatsapp(data);
+      }}>
+      <Image alt='Enviar por whatsapp' source={whats48} style={{ width: 24, height: 24 }} />
+      <Text style={{ color: 'white', marginLeft: 2 }}>Enviar</Text>
+    </TouchableOpacity>
+  </View>
+);
 
 const Loading = () => (
   <View style={styles.noMatchesText}>
