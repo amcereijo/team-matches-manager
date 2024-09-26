@@ -5,12 +5,34 @@
   "build": {
     "development": {
       "developmentClient": true,
-      "distribution": "internal"
+      "distribution": "internal",
+      "android": {
+        "gradleCommand": ":app:assembleDebug",
+        "buildType": "apk",
+        "env": {
+          "EXPO_USE_HERMES": "true"
+        }
+      }
     },
     "preview": {
-      "distribution": "internal"
+      "distribution": "internal",
+      "android": {
+        "gradleCommand": ":app:assembleDebug",
+        "buildType": "apk",
+        "env": {
+          "EXPO_USE_HERMES": "true"
+        }
+      }
     },
-    "production": {}
+    "production": {
+      "android": {
+        "gradleCommand": ":app:bundleRelease",
+        "buildType": "app-bundle",
+        "env": {
+          "EXPO_USE_HERMES": "true"
+        }
+      }
+    }
   },
   "submit": {
     "production": {}
