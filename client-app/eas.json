@@ -17,7 +17,6 @@
     "preview": {
       "distribution": "internal",
       "android": {
-        "gradleCommand": ":app:assembleDebug",
         "buildType": "apk",
         "env": {
           "EXPO_USE_HERMES": "true"

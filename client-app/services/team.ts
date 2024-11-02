@@ -10,7 +10,7 @@ export async function getClub() {
   return clubObject;
 }
 
-export async function getClubname() {
+export async function getClubName() {
   const club = await getClub();
   if (!club) {
     return 'No team selected';

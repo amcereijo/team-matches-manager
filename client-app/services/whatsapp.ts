@@ -1,6 +1,6 @@
 import { Linking } from "react-native";
 import { Game } from "./fmp";
-import { getClubname } from "./team";
+import { getClubName as teamGetClubName } from "./team";
 
 const formatDate = (date?: string) => {
   if (!date) return '';
@@ -18,23 +18,28 @@ const formatDate = (date?: string) => {
   return dateObj.toLocaleDateString('es-ES', options);
 }
 
-function createMessages(game: Game) {
+async function createMessages(game: Game) {
   let text = '';
   text += `Próximo partido *${formatDate(game.date!)}* a las *${game.time}* en ${game.location} - ${game.map}`;
   text += `\n\n${game.local} - ${game.visit}`;
   text += '\n\n1.';
-  text += '\n\nPorteros:';
+  text += '\n\nPorteros:\n1.';
   text += '\n\nDelegado:';
-  if ((game.local || '').match(getClubname())) {
+
+
+  const loggedClubName = await teamGetClubName();
+  if ((game.local || '').match(loggedClubName)) {
     text += '\nAnotador:';
   }
+
+  text += '\n\nNo puede:'
   text += '\n\n';
 
   return text;
 }
 
 export async function openWhatsapp(game: Game) {
-  const message = createMessages(game);
+  const message = await createMessages(game);
   const url = `https://wa.me/?text=${message}`;
   const encoded = encodeURI(url);
   try {
