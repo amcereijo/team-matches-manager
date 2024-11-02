@@ -1,0 +1,27 @@
+# Use an official Node runtime as a parent image
+FROM node:20-alpine
+
+# Set the working directory in the container
+WORKDIR /usr/src/app
+
+RUN mkdir -p /usr/src/app/data
+
+# Install SQLite3
+#RUN apt-get update && apt-get install -y sqlite3
+
+# Copy package.json and package-lock.json
+COPY package*.json ./
+
+# Bundle app source
+COPY . .
+
+RUN rm -rf node_modules
+
+# Install any needed packages
+RUN npm install
+
+# Build TypeScript files
+# RUN npm run build
+
+# Run the populate script
+CMD ["npm", "run", "dt:populate-clubs"]

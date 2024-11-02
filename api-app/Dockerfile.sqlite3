@@ -1,0 +1,14 @@
+# Use a lightweight base image
+FROM alpine:3.14
+
+# Install SQLite3
+RUN apk add --no-cache sqlite
+
+# Set the working directory
+WORKDIR /data
+
+# Create a volume for persistent data storage
+VOLUME /data
+
+# Set the default command to run SQLite3
+CMD ["sqlite3"]

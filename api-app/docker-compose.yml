@@ -1,0 +1,36 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    volumes:
+      - sqlite-data:/usr/src/app/data
+    environment:
+      - NODE_ENV=production
+      - DATA_BASE=/usr/src/app/data/team-matches.sqlite
+    # depends_on:
+    #   - sqlite
+
+  populate-data:
+    build:
+      context: .
+      dockerfile: Dockerfile.populate
+    volumes:
+      - sqlite-data:/usr/src/app/data
+    environment:
+      - DATA_BASE=/usr/src/app/data/team-matches.sqlite
+      # - NODE_ENV=production
+    # depends_on:
+    #   - sqlite
+
+  # sqlite:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.sqlite3
+  #   volumes:
+  #     - sqlite-data:/data
+
+volumes:
+  sqlite-data:
