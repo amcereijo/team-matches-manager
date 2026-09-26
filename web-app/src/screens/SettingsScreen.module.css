@@ -1,0 +1,31 @@
+.container {
+  flex: 1;
+  display: flex;
+  padding: 20px;
+  align-items: flex-start;
+  gap: 20px;
+}
+
+.column {
+  flex: 1;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.title {
+  font-size: 20px;
+  font-weight: bold;
+}
+
+.picker {
+  height: 40px;
+  width: 160px;
+  border: 1px solid gray;
+  border-radius: 4px;
+  background: #fff;
+  font-size: 14px;
+}
