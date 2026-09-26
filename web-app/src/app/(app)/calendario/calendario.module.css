@@ -224,6 +224,43 @@
   align-self: flex-start;
 }
 
+.matchTopRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.pendingBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: var(--radius-pill);
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fde68a;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.matchPendingTime {
+  color: var(--warning);
+  font-weight: 500;
+}
+
+.notReady {
+  border-color: #fde68a;
+  background: var(--surface);
+}
+
+.notReady.zebra {
+  background: #fffbeb;
+  border-color: #fde68a;
+}
+
 .matchTeams {
   font-size: 15px;
   font-weight: 600;

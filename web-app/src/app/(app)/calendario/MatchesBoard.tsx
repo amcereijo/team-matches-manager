@@ -57,6 +57,19 @@ function buildWhatsappUrl(game: Game, clubName: string): string {
   return `https://wa.me/?text=${encodeURIComponent(text)}`;
 }
 
+function hasTime(time?: string | null): boolean {
+  if (!time) return false;
+  const trimmed = time.trim();
+  if (!trimmed) return false;
+  // Treat sentinel / placeholder times as "not ready"
+  if (/^00:?00$/i.test(trimmed) || /^--:?--$/.test(trimmed)) return false;
+  return /\d/.test(trimmed);
+}
+
+function isMatchReady(game: Game): boolean {
+  return Boolean(game.date) && hasTime(game.time);
+}
+
 export function MatchesBoard({
   clubName,
   matches,
@@ -113,14 +126,30 @@ export function MatchesBoard({
           const formatted = formatMatchDate(row.date, row.time);
           const day = formatDayLabel(row.date);
           const time = row.time ?? '';
+          const ready = isMatchReady(row);
           const isZebra = i % 2 === 1;
           return (
             <div
               key={`${row.date}-${row.time}-${row.local}-${row.visit}-${i}`}
-              className={`${styles.matchRow} ${isZebra ? styles.zebra : ''}`}
+              className={`${styles.matchRow} ${isZebra ? styles.zebra : ''} ${
+                ready ? '' : styles.notReady
+              }`}
             >
               <div className={styles.matchMain}>
-                {row.league && <span className={styles.matchLeague}>{row.league}</span>}
+                <div className={styles.matchTopRow}>
+                  {row.league && (
+                    <span className={styles.matchLeague}>{row.league}</span>
+                  )}
+                  {!ready && (
+                    <span
+                      className={styles.pendingBadge}
+                      title="La federación aún no ha confirmado la hora de este partido."
+                    >
+                      <span aria-hidden>⏳</span>
+                      <span>Pendiente</span>
+                    </span>
+                  )}
+                </div>
                 <span className={styles.matchTeams}>
                   {row.local ?? '?'} <span style={{ color: 'var(--text-subtle)' }}>vs</span> {row.visit ?? '?'}
                 </span>
@@ -136,12 +165,17 @@ export function MatchesBoard({
                       Sin fecha y hora
                     </span>
                   )}
-                  {time && (
+                  {ready ? (
                     <span>
                       <span aria-hidden>⏰</span>
                       {time}
                     </span>
-                  )}
+                  ) : row.date ? (
+                    <span className={styles.matchPendingTime}>
+                      <span aria-hidden>⏰</span>
+                      hora por confirmar
+                    </span>
+                  ) : null}
                   {row.location && (
                     <span>
                       <span aria-hidden>📍</span>
