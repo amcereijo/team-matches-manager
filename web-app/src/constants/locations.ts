@@ -28,7 +28,7 @@ export const LOCATION_MAP: Record<string, string> = {
   'COLEGIO LUYFE RIVAS': 'https://www.google.com/maps/place/COLEGIO LUYFE RIVAS',
   'COLEGIO MIRABAL': 'https://www.google.com/maps/place/COLEGIO MIRABAL',
   'COLEGIO PARQUE': 'https://www.google.com/maps/place/COLEGIO PARQUE',
-  'COLEGIO PUBLICO VIRGEN DE NAVALAZARZA		': 'https://www.google.com/maps/place/COLEGIO PUBLICO VIRGEN DE NAVALAZARZA		',
+  'COLEGIO PUBLICO VIRGEN DE NAVALAZARZA\t\t': 'https://www.google.com/maps/place/COLEGIO PUBLICO VIRGEN DE NAVALAZARZA\t\t',
   'COLEGIO RETAMAR': 'https://www.google.com/maps/place/COLEGIO RETAMAR',
   'COLEGIO SAN JOSE DEL PARQUE': 'https://www.google.com/maps/place/COLEGIO SAN JOSE DEL PARQUE',
   'COLEGIO SANTA MARIA DEL PILAR-NARANJA': 'https://www.google.com/maps/place/COLEGIO SANTA MARIA DEL PILAR-NARANJA',

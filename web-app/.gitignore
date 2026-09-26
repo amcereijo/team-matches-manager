@@ -1,3 +1,6 @@
 node_modules/
-dist/
-.vite/
+.next/
+out/
+.env*.local
+*.log
+.DS_Store
