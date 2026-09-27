@@ -37,16 +37,45 @@ npm run lint         # next lint
 - `POST /api/auth/logout` — destroys the session.
 - `GET  /api/auth/me` — returns the current club or `null`.
 
-Local credentials live in `src/constants/credentials.ts`:
+Credentials are not stored in source. They come from the `CLUB_CREDENTIALS_JSON` env var (per-club overrides) layered on top of the auto-derived `club<code>` / `club<code>` defaults for every code in `CLUBS_MAP`. See [Club credentials (env)](#club-credentials-env) for the format and rotation instructions.
 
-| Club                 | Username      | Password      |
-| -------------------- | ------------- | ------------- |
-| TISO PATIN (411)     | `tiso`        | `tiso`        |
-| ALCALA PA (332)      | `club332`     | `club332`     |
-| ALCOBENDAS PA (328)  | `club328`     | `club328`     |
-| … (every club)       | `club<código>` | `club<código>` |
+## Club credentials (env)
 
-The TISO row is the historical credential used by the mobile app; every other club auto-derives `club<code>` / `club<code>` so the table is fully usable out of the box.
+The web app reads club credential overrides from a single env var, `CLUB_CREDENTIALS_JSON`. The value is a JSON object keyed by stringified numeric club codes:
+
+```jsonc
+{
+  "411": { "username": "tiso", "password": "<rotated-value>" },
+  "332": { "username": "alcala", "password": "<rotated-value>" }
+}
+```
+
+Rules:
+
+- Keys MUST be stringified integers (`"411"`, not `411`).
+- Values MUST be `{ "username": string, "password": string }` with both non-empty.
+- Anything else — invalid JSON, arrays, wrong inner types, non-numeric keys — is rejected at module load. On rejection the env var is treated as empty (**fail closed**: no override applies, auto-derived defaults still work) and a single warning is logged identifying the reason.
+- Clubs not listed in the env var fall through to the auto-derived `club<code>` / `club<code>` default. Removing the env var entirely does not lock any club out.
+
+### Local development
+
+Set the value in `web-app/.env.local` (already gitignored) and restart `next dev`:
+
+```bash
+echo 'CLUB_CREDENTIALS_JSON={"411":{"username":"tiso","password":"tiso"}}' >> web-app/.env.local
+```
+
+### Vercel
+
+In the Vercel project, set `CLUB_CREDENTIALS_JSON` for **Production**, **Preview**, and **Development** environments. At minimum include the TISO entry (`411`) so the historical admin login keeps working; add other clubs as they rotate off the `club<code>` default.
+
+### Rotation
+
+1. In Vercel → Project → Settings → Environment Variables, edit `CLUB_CREDENTIALS_JSON`.
+2. Save (this triggers a redeploy).
+3. No code change. Mobile clients automatically pick up the new credentials because they POST to `/api/auth/login` — the bundle no longer carries any secret.
+
+To remove a club from the overrides (let it fall back to `club<code>`), delete that entry from the JSON. To rotate a single club's password, change just that entry's `password`.
 
 ## Competition-driven matches
 
@@ -131,8 +160,6 @@ src/
 
 ## Hardcoded credentials
 
-The TISO default (`tiso` / `tiso`) matches the mobile app so existing testers can sign in immediately. For any other club, the credentials are `club<code>` / `club<code>`. Rotate them by editing `src/constants/credentials.ts`; the rest of the app reads through that single module.
-
-## Deploy
+No credentials are hardcoded. See [Club credentials (env)](#club-credentials-env) — the source module `src/constants/credentials.ts` only merges auto-derived `club<code>` / `club<code>` defaults with whatever overrides `CLUB_CREDENTIALS_JSON` provides.## Deploy
 
 This is a standard Next.js app, so any platform that supports Node 18+ works (Vercel, Render, Fly, a Docker container, …). On Vercel the project is detected as "Next.js" with no extra config.

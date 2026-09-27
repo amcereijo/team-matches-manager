@@ -6,29 +6,60 @@ import styles from './styles';
 import { CLUBS, CLUBS_MAP, ClubType, getClubName } from '../../constants/clubs';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// This is a simple login screen that checks for a hardcoded username and password
-const USER = 'tiso';
-const PASSWORD = 'tiso';
-const TEAM = 411;
+// TODO: move to client-app/constants/api.ts (or env-driven via EXPO_PUBLIC_*)
+// once the production Vercel domain is finalized. For now the login screen
+// posts directly to the web app's /api/auth/login so credentials never leave
+// the server bundle — see openspec/changes/move-club-credentials-to-env.
+const API_BASE = 'https://team-matches-manager.vercel.app/api';
 
 const LoginScreen = ({navigation}: {navigation: any}) => {
   const [team, setTeam] = useState<ClubType | null>(null);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
 
   const submit = async () => {
-    const data = { team, username, password };
-    // console.log(data);
+    if (busy) return;
+    setError('');
+    setBusy(true);
 
-    if (team?.code === TEAM && username === USER && password === PASSWORD) {
+    try {
+      const response = await fetch(`${API_BASE}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      });
+
+      if (response.status < 200 || response.status >= 300) {
+        let message = `Invalid username or password for team ${team}`;
+        try {
+          const data = await response.json();
+          if (data && typeof data.error === 'string') {
+            message = data.error;
+          }
+        } catch {}
+        setError(message);
+        return;
+      }
+
+      const data = (await response.json()) as { ok: boolean; club: ClubType };
+      const club = data?.club ?? team;
+      if (!club) {
+        setError(`Invalid username or password for team ${team}`);
+        return;
+      }
+
       await AsyncStorage.setItem('login', 'true');
-      await AsyncStorage.setItem('club', JSON.stringify(team));
+      await AsyncStorage.setItem('club', JSON.stringify(club));
       navigation.push('DrawerNavigator');
-      return;
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : 'Network error, please try again',
+      );
+    } finally {
+      setBusy(false);
     }
-
-    setError(`Invalid username or password for team ${team}`);
   };
 
   return (
@@ -53,6 +84,8 @@ const LoginScreen = ({navigation}: {navigation: any}) => {
         onChangeText={setUsername}
         placeholder="Username"
         style={styles.input}
+        autoCapitalize="none"
+        autoCorrect={false}
       />
 
       <TextInput
@@ -61,9 +94,11 @@ const LoginScreen = ({navigation}: {navigation: any}) => {
         placeholder="Password"
         secureTextEntry
         style={styles.input}
+        autoCapitalize="none"
+        autoCorrect={false}
       />
 
-      <Button title="Entrar" onPress={submit} />
+      <Button title={busy ? 'Entrando…' : 'Entrar'} onPress={submit} disabled={busy} />
 
       <Text style={{ color: 'red' }}>{error}</Text>
     </View>
