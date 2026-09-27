@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import type { Game } from '@/types';
 import { getItem, setItem } from '@/services/storage';
 import styles from './calendario.module.css';
@@ -19,6 +19,32 @@ function parseFmpDate(date?: string | null, time?: string | null): Date | null {
   const iso = `${year}-${pad(month)}-${pad(day)}T${pad(hh)}:${pad(mm)}:00`;
   const d = new Date(iso);
   return isNaN(d.getTime()) ? null : d;
+}
+
+const UNDATED_KEY = 'undated';
+
+function isoWeekKey(d: Date): string {
+  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const dayNum = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+  const weekNum = Math.ceil(((date.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
+  return `${date.getUTCFullYear()}-W${String(weekNum).padStart(2, '0')}`;
+}
+
+function matchWeekKey(row: Game): string {
+  const d = parseFmpDate(row.date, row.time);
+  return d ? isoWeekKey(d) : UNDATED_KEY;
+}
+
+function isMatchToday(row: Game, today: Date): boolean {
+  const d = parseFmpDate(row.date, row.time);
+  if (!d) return false;
+  return (
+    d.getFullYear() === today.getFullYear() &&
+    d.getMonth() === today.getMonth() &&
+    d.getDate() === today.getDate()
+  );
 }
 
 function formatMatchDate(date?: string | null, time?: string | null): string {
@@ -79,6 +105,16 @@ export function MatchesBoard({
   matches?: Game[];
   error?: string;
 }) {
+  const [today, setToday] = useState<Date | null>(null);
+
+  useEffect(() => {
+    setToday(new Date());
+    function refresh() {
+      setToday(new Date());
+    }
+    document.addEventListener('visibilitychange', refresh);
+    return () => document.removeEventListener('visibilitychange', refresh);
+  }, []);
   if (error) {
     return (
       <div className={styles.page}>
@@ -128,7 +164,19 @@ export function MatchesBoard({
           const time = row.time ?? '';
           const ready = isMatchReady(row);
           const isZebra = i % 2 === 1;
+          const prevKey = i > 0 ? matchWeekKey(matches[i - 1]) : null;
+          const showSeparator =
+            i === 0 ? false : prevKey !== matchWeekKey(row);
+          const isToday = today ? isMatchToday(row, today) : false;
           return (
+            <React.Fragment key={`row-${i}`}>
+              {showSeparator && (
+                <div
+                  className={styles.weekSeparator}
+                  aria-hidden
+                  data-testid="week-separator"
+                />
+              )}
             <div
               key={`${row.date}-${row.time}-${row.local}-${row.visit}-${i}`}
               className={`${styles.matchRow} ${isZebra ? styles.zebra : ''} ${
@@ -196,18 +244,30 @@ export function MatchesBoard({
                 </div>
               </div>
               <div className={styles.matchActions}>
-                <a
-                  className={styles.sendWhatsButton}
-                  href={buildWhatsappUrl(row, clubName)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label={`Compartir ${row.local} vs ${row.visit} por WhatsApp`}
-                >
-                  <span aria-hidden>📱</span>
-                  <span>Enviar</span>
-                </a>
+                {isToday ? (
+                  <span
+                    className={styles.todayPill}
+                    aria-label="Partido de hoy"
+                    title="Este partido es hoy"
+                  >
+                    <span aria-hidden>⏰</span>
+                    <span>¡Hoy!</span>
+                  </span>
+                ) : (
+                  <a
+                    className={styles.sendWhatsButton}
+                    href={buildWhatsappUrl(row, clubName)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={`Compartir ${row.local} vs ${row.visit} por WhatsApp`}
+                  >
+                    <span aria-hidden>📱</span>
+                    <span>Enviar</span>
+                  </a>
+                )}
               </div>
             </div>
+            </React.Fragment>
           );
         })}
       </div>

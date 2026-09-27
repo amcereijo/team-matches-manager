@@ -47,6 +47,13 @@
   gap: var(--space-2);
 }
 
+.weekSeparator {
+  height: 1px;
+  background: var(--border);
+  margin: var(--space-2) var(--space-3);
+  border-radius: 1px;
+}
+
 /* ---------- Info panel ---------- */
 
 .infoPanel {
@@ -322,6 +329,19 @@
 
 .sendWhatsButton:hover {
   background: var(--whats-hover);
+}
+
+.todayPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  border: 1px solid var(--accent);
 }
 
 .locationPill {
