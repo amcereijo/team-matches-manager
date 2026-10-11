@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { COMPETITIONS } from '@/constants/competitions';
 import { getCurrentClub } from '@/lib/sessionServer';
-import { getMatchesForClub } from '@/services/fmp';
+import { getMatchesForClub } from '@/services/competition';
 import styles from './main.module.css';
 
 function parseFmpDate(date?: string | null, time?: string | null): Date | null {
@@ -32,7 +32,7 @@ export default async function HomePage() {
   let nextMatch: Awaited<ReturnType<typeof getMatchesForClub>>['matches'][number] | null = null;
   let totalMatches = 0;
   try {
-    const data = await getMatchesForClub(club.code);
+    const data = await getMatchesForClub(club);
     totalMatches = data.matches.length;
     const sorted = [...data.matches].sort((a, b) => {
       const da = parseFmpDate(a.date, a.time)?.getTime() ?? Infinity;

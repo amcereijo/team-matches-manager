@@ -1,0 +1,70 @@
+import axios from 'axios';
+import { load } from 'cheerio';
+import he from 'he';
+import { COMPETITIONS } from '@/constants/competitions';
+import { LOCATION_MAP } from '@/constants/locations';
+import type { Game } from '@/types';
+
+function decodeHtml(html: string | null | undefined): string {
+  if (!html) return '';
+  return he.decode(String(html));
+}
+
+function trimLocation(location: string): string {
+  return location.replace(/\s+/g, ' ').trim();
+}
+
+function readParamGameCodes(el: any): { localCode: number | null; visitCode: number | null } {
+  const raw = (el as any).attribs?.['param_game'];
+  if (typeof raw !== 'string') return { localCode: null, visitCode: null };
+  const parts = raw.split('_');
+  const localCode = parts[2] !== undefined ? Number.parseInt(parts[2], 10) : NaN;
+  const visitCode = parts[3] !== undefined ? Number.parseInt(parts[3], 10) : NaN;
+  return {
+    localCode: Number.isFinite(localCode) ? localCode : null,
+    visitCode: Number.isFinite(visitCode) ? visitCode : null,
+  };
+}
+
+export async function fetchFgpMatches(): Promise<{ teams: Set<string>; fields: Map<string, string>; matches: Game[] }> {
+  const cfg = COMPETITIONS.FGP;
+  const response = await axios.get(cfg.endpoint, {
+    params: { cliente: cfg.cliente, idm: cfg.idm, id_temp: cfg.idTemp },
+    responseType: 'text',
+  });
+
+  const $ = load(String(response.data));
+  const teams = new Set<string>();
+  const fields = new Map<string, string>();
+  const matches: Game[] = [];
+
+  $('.fila_agenda').each((_i, el) => {
+    const nodes = (el as any).childNodes as any[];
+    const league = decodeHtml($(nodes[3]?.childNodes?.[0]).html());
+    const date = decodeHtml($(nodes[5]).html());
+    const time = decodeHtml($(nodes[7]).html());
+    const local = decodeHtml($(nodes[11]).html());
+    const visit = decodeHtml($(nodes[15]).html());
+    const location = trimLocation(decodeHtml($(nodes[19]).html()));
+    const map = LOCATION_MAP[location] ?? '';
+    const { localCode, visitCode } = readParamGameCodes(el);
+
+    if (local) teams.add(local);
+    if (visit) teams.add(visit);
+    if (location) fields.set(location, map);
+
+    matches.push({
+      league: league || null,
+      date: date || null,
+      time: time || null,
+      local: local || null,
+      visit: visit || null,
+      location: location || null,
+      map: map || null,
+      localCode,
+      visitCode,
+    });
+  });
+
+  return { teams, fields, matches };
+}

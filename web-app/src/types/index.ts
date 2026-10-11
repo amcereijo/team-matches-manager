@@ -2,6 +2,11 @@ import type { CompetitionId, Competition } from '@/constants/competitions';
 
 export type { CompetitionId, Competition };
 
+export type CompetitionListItem = {
+  id: CompetitionId;
+  name: string;
+};
+
 export type Game = {
   league: string | null;
   date: string | null;
@@ -10,6 +15,8 @@ export type Game = {
   visit: string | null;
   location: string | null;
   map: string | null;
+  localCode: number | null;
+  visitCode: number | null;
 };
 
 export type Field = {

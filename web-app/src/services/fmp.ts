@@ -35,12 +35,22 @@ function isClubMatch(team: string | null, aliases: string[]): boolean {
   return aliases.some((alias) => upper === alias || upper.startsWith(`${alias} `));
 }
 
-export async function fetchCompetitionMatches(
-  competition: CompetitionId,
-): Promise<{ teams: Set<string>; fields: Map<string, string>; matches: Game[] }> {
-  const cfg = COMPETITIONS[competition];
+function readParamGameCodes(el: any): { localCode: number | null; visitCode: number | null } {
+  const raw = (el as any).attribs?.['param_game'];
+  if (typeof raw !== 'string') return { localCode: null, visitCode: null };
+  const parts = raw.split('_');
+  const localCode = parts[2] !== undefined ? Number.parseInt(parts[2], 10) : NaN;
+  const visitCode = parts[3] !== undefined ? Number.parseInt(parts[3], 10) : NaN;
+  return {
+    localCode: Number.isFinite(localCode) ? localCode : null,
+    visitCode: Number.isFinite(visitCode) ? visitCode : null,
+  };
+}
+
+export async function fetchFmpMatches(): Promise<{ teams: Set<string>; fields: Map<string, string>; matches: Game[] }> {
+  const cfg = COMPETITIONS.FMP;
   const form = new FormData();
-  form.append('cliente', competition.toLowerCase());
+  form.append('cliente', cfg.cliente);
   form.append('idm', cfg.idm);
   form.append('id_temp', cfg.idTemp);
 
@@ -63,6 +73,7 @@ export async function fetchCompetitionMatches(
     const visit = decodeHtml($(nodes[15]).html());
     const location = trimLocation(decodeHtml($(nodes[19]).html()));
     const map = LOCATION_MAP[location] ?? '';
+    const { localCode, visitCode } = readParamGameCodes(el);
 
     if (local) teams.add(local);
     if (visit) teams.add(visit);
@@ -76,40 +87,10 @@ export async function fetchCompetitionMatches(
       visit: visit || null,
       location: location || null,
       map: map || null,
+      localCode,
+      visitCode,
     });
   });
 
   return { teams, fields, matches };
-}
-
-export async function getMatchesForClub(
-  clubCode: number,
-): Promise<MatchesResponse> {
-  const { CLUBS_MAP } = await import('@/constants/clubs');
-  const club = CLUBS_MAP[clubCode];
-  if (!club) {
-    throw new Error(`Club ${clubCode} not found`);
-  }
-
-  const { teams, fields, matches } = await fetchCompetitionMatches(club.competition);
-  const aliases = clubAliases(club.name);
-  const filtered = matches.filter(
-    (m) => isClubMatch(m.local, aliases) || isClubMatch(m.visit, aliases),
-  );
-
-  const teamList: Team[] = Array.from(teams)
-    .sort((a, b) => a.localeCompare(b, 'es'))
-    .map((name) => ({ name }));
-
-  const fieldList: Field[] = Array.from(fields.entries())
-    .sort(([a], [b]) => a.localeCompare(b, 'es'))
-    .map(([name, map]) => ({ name, map: map || null }));
-
-  return {
-    competition: club.competition,
-    club: { code: club.code, name: club.name },
-    teams: teamList,
-    fields: fieldList,
-    matches: filtered,
-  };
 }

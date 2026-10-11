@@ -3,13 +3,13 @@
 Next.js 14 port of the Vite SPA. Same login → drawer → calendar → WhatsApp-share flow, now backed by a small server side that:
 
 1. Handles **local user/password authentication per club** with cookie-based sessions (`iron-session`).
-2. Exposes a **competition-driven matches API**. For each club we know its competition (FMP for now) and the backend fetches / parses the upstream HTML, then returns the upcoming matches plus the catalogue of **teams** and **fields** for that competition.
+2. Exposes a **competition-driven matches API**. For each club we know its competition (FMP, FGP) and the web app's server side fetches / parses the upstream HTML directly, then returns the upcoming matches plus the catalogue of **teams** and **fields** for that competition.
 
 ## Stack
 
 - Next.js 14 (App Router, React Server Components)
 - React 18 + TypeScript
-- `axios` + `cheerio` + `he` to parse the FMP endpoint on the server (no CORS issues)
+- `axios` + `cheerio` + `he` to parse the FMP and FGP upstream endpoints on the server (no CORS issues)
 - `iron-session` for cookie sessions
 
 ## Develop
@@ -41,33 +41,35 @@ Credentials are not stored in source. They come from the `CLUB_CREDENTIALS_JSON`
 
 ## Club credentials (env)
 
-The web app reads club credential overrides from a single env var, `CLUB_CREDENTIALS_JSON`. The value is a JSON object keyed by stringified numeric club codes:
+The web app reads club credential overrides from a single env var, `CLUB_CREDENTIALS_JSON`. The value is a JSON object keyed by composite `<competition>-<code>` pairs (e.g. `"FMP-411"`, `"FGP-411"`):
 
 ```jsonc
 {
-  "411": { "username": "tiso", "password": "<rotated-value>" },
-  "332": { "username": "alcala", "password": "<rotated-value>" }
+  "FMP-411": { "username": "tiso", "password": "<rotated-value>" },
+  "FMP-332": { "username": "alcala", "password": "<rotated-value>" },
+  "FGP-438": { "username": "artabros", "password": "<rotated-value>" },
+  "FGP-162": { "username": "a-guarda", "password": "<rotated-value>" }
 }
 ```
 
 Rules:
 
-- Keys MUST be stringified integers (`"411"`, not `411`).
+- Keys MUST match `"FMP-411"` / `"FGP-411"` etc. — exactly `<FMP|FGP>-<digits>`. Bare numeric keys (`"411"`) are rejected with a warning, because sidgad reuses the same numeric code across FMP and FGP and a bare key would be ambiguous.
 - Values MUST be `{ "username": string, "password": string }` with both non-empty.
-- Anything else — invalid JSON, arrays, wrong inner types, non-numeric keys — is rejected at module load. On rejection the env var is treated as empty (**fail closed**: no override applies, auto-derived defaults still work) and a single warning is logged identifying the reason.
-- Clubs not listed in the env var fall through to the auto-derived `club<code>` / `club<code>` default. Removing the env var entirely does not lock any club out.
+- Anything else — invalid JSON, arrays, wrong inner types, malformed keys — is rejected at module load. On rejection the env var is treated as empty (**fail closed**: no override applies, auto-derived defaults still work) and a single warning is logged identifying the reason.
+- Clubs not listed in the env var fall through to the auto-derived `club-<competition>-<code>` / `club-<competition>-<code>` default (e.g. `club-FMP-411` / `club-FMP-411`, `club-FGP-411` / `club-FGP-411`). Removing the env var entirely does not lock any club out.
 
 ### Local development
 
 Set the value in `web-app/.env.local` (already gitignored) and restart `next dev`:
 
 ```bash
-echo 'CLUB_CREDENTIALS_JSON={"411":{"username":"tiso","password":"tiso"}}' >> web-app/.env.local
+echo 'CLUB_CREDENTIALS_JSON={"FMP-411":{"username":"tiso","password":"tiso"},"FGP-438":{"username":"artabros","password":"artabros"}}' >> web-app/.env.local
 ```
 
 ### Vercel
 
-In the Vercel project, set `CLUB_CREDENTIALS_JSON` for **Production**, **Preview**, and **Development** environments. At minimum include the TISO entry (`411`) so the historical admin login keeps working; add other clubs as they rotate off the `club<code>` default.
+In the Vercel project, set `CLUB_CREDENTIALS_JSON` for **Production**, **Preview**, and **Development** environments. At minimum include the TISO entry (`FMP-411`) so the historical admin login keeps working; add other clubs as they rotate off the `club-<competition>-<code>` default (e.g. `FGP-438` for HL NOROESTE with username `artabros`). Existing deployments using the old `"411"` numeric key shape must update to the composite `"FMP-411"` form when this change ships.
 
 ### Rotation
 
@@ -79,8 +81,8 @@ To remove a club from the overrides (let it fall back to `club<code>`), delete t
 
 ## Competition-driven matches
 
-- `GET /api/competitions` — list of supported competitions (FMP for now).
-- `GET /api/matches` (auth required) — calls `getMatchesForClub` for the logged-in club. The backend POSTs `multipart/form-data` to the competition endpoint, scrapes `fila_agenda` rows with cheerio, and returns:
+- `GET /api/competitions` — list of supported competitions (`FMP`, `FGP`). Sourced from the static `COMPETITIONS` catalogue — no upstream call.
+- The Calendario page calls the same server-side fetcher as the home page, dispatching to `services/fmp.ts` (FMP, POST with `multipart/form-data`) or `services/fgp.ts` (FGP, GET with query string) based on the logged-in club's competition. Both scrape `fila_agenda` rows with cheerio and return:
 
 ```jsonc
 {
@@ -107,7 +109,7 @@ The auth guard lives in `src/app/(app)/layout.tsx` (server component) — it rea
 
 ### Login flow
 
-1. **Competition** — picker over the registered competitions (FMP for now). The chosen id is persisted to `localStorage` under `tmm.web.selectedCompetition` and shown as a removable chip.
+1. **Competition** — picker over the registered competitions (`FMP`, `FGP`). The chosen id is persisted to `localStorage` under `tmm.web.selectedCompetition` and shown as a removable chip.
 2. **Team** — picker over the clubs belonging to the selected competition. The chosen club is persisted as JSON under `tmm.web.selectedClub` and shown as a removable chip.
 3. **Credentials** — username + password form. Only appears once a club is chosen. The "← Cambiar club" / "← Cambiar competición" links reset the relevant localStorage key and bounce back to the previous step.
 
@@ -133,7 +135,6 @@ src/
         logout/route.ts
         me/route.ts
       competitions/route.ts
-      matches/route.ts
     login/
       page.tsx
       LoginForm.tsx
@@ -152,7 +153,9 @@ src/
     session.ts                # iron-session config
     sessionServer.ts          # server-only helpers
   services/
-    fmp.ts                    # upstream fetcher
+    competition.ts            # getMatchesForClub dispatcher (FMP/FGP)
+    fmp.ts                    # FMP upstream fetcher (POST + cheerio)
+    fgp.ts                    # FGP upstream fetcher (GET + cheerio)
     storage.ts                # client-only localStorage helper
   types/
     index.ts

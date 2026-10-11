@@ -1,12 +1,12 @@
 import type { ClubType } from '@/types';
-import { CLUBS_MAP } from './clubs';
+import { CLUBS_MAP, clubMapKey, type ClubMapKey } from './clubs';
 
 export type Credentials = {
   username: string;
   password: string;
 };
 
-function parseEnvOverrides(): Record<number, Credentials> {
+function parseEnvOverrides(): Record<ClubMapKey, Credentials> {
   const raw = process.env.CLUB_CREDENTIALS_JSON;
   if (!raw) return {};
 
@@ -24,16 +24,16 @@ function parseEnvOverrides(): Record<number, Credentials> {
 
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
     console.warn(
-      '[credentials] CLUB_CREDENTIALS_JSON must be a JSON object keyed by numeric club code; ignoring.',
+      '[credentials] CLUB_CREDENTIALS_JSON must be a JSON object keyed by "<competition>-<code>"; ignoring.',
     );
     return {};
   }
 
-  const result: Record<number, Credentials> = {};
+  const result: Record<ClubMapKey, Credentials> = {};
   for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
-    if (!/^\d+$/.test(key)) {
+    if (!/^(FMP|FGP)-\d+$/.test(key)) {
       console.warn(
-        `[credentials] CLUB_CREDENTIALS_JSON key "${key}" is not a stringified integer; ignoring entry.`,
+        `[credentials] CLUB_CREDENTIALS_JSON key "${key}" is not "<competition>-<code>" (e.g. "FMP-411"); ignoring entry.`,
       );
       continue;
     }
@@ -57,7 +57,7 @@ function parseEnvOverrides(): Record<number, Credentials> {
       );
       continue;
     }
-    result[Number(key)] = {
+    result[key as ClubMapKey] = {
       username: (value as Credentials).username,
       password: (value as Credentials).password,
     };
@@ -65,21 +65,21 @@ function parseEnvOverrides(): Record<number, Credentials> {
   return result;
 }
 
-const ENV_OVERRIDES: Record<number, Credentials> = parseEnvOverrides();
+const ENV_OVERRIDES: Record<ClubMapKey, Credentials> = parseEnvOverrides();
 
-const BASE_CREDENTIALS: Record<number, Credentials> = {};
+const BASE_CREDENTIALS: Record<ClubMapKey, Credentials> = {};
 
-export const CLUB_CREDENTIALS: Record<number, Credentials> = {
+export const CLUB_CREDENTIALS: Record<ClubMapKey, Credentials> = {
   ...BASE_CREDENTIALS,
   ...ENV_OVERRIDES,
 };
 
-for (const code of Object.keys(CLUBS_MAP)) {
-  const num = Number(code);
-  if (!CLUB_CREDENTIALS[num]) {
-    CLUB_CREDENTIALS[num] = {
-      username: `club${num}`,
-      password: `club${num}`,
+for (const club of Object.values(CLUBS_MAP)) {
+  const key = clubMapKey(club.competition, club.code);
+  if (!CLUB_CREDENTIALS[key]) {
+    CLUB_CREDENTIALS[key] = {
+      username: `club-${club.competition}-${club.code}`,
+      password: `club-${club.competition}-${club.code}`,
     };
   }
 }
@@ -89,23 +89,23 @@ for (const code of Object.keys(CLUBS_MAP)) {
  *
  * Credential sources, in priority order:
  *   1. `process.env.CLUB_CREDENTIALS_JSON` — overrides added at module load.
- *      Shape: { "<clubCode>": { "username": string, "password": string }, ... }.
+ *      Shape: { "<competition>-<code>": { "username": string, "password": string }, ... }.
  *      A malformed env var is rejected (logged once) and treated as empty.
- *   2. Auto-derived defaults — `club<code>` / `club<code>` for every code in CLUBS_MAP.
+ *   2. Auto-derived defaults — `club-<competition>-<code>` for every club in CLUBS_MAP
+ *      (e.g. `club-FMP-411`, `club-FGP-411`).
  */
 export function findClubByCredentials(username: string, password: string): ClubType | null {
   const normalized = username.trim().toLowerCase();
   const normalizedPass = password.trim();
   if (!normalized || !normalizedPass) return null;
 
-  for (const codeStr of Object.keys(CLUB_CREDENTIALS)) {
-    const code = Number(codeStr);
-    const creds = CLUB_CREDENTIALS[code];
+  for (const key of Object.keys(CLUB_CREDENTIALS) as ClubMapKey[]) {
+    const creds = CLUB_CREDENTIALS[key];
     if (
       creds.username.toLowerCase() === normalized &&
       creds.password === normalizedPass
     ) {
-      return CLUBS_MAP[code] ?? null;
+      return CLUBS_MAP[key] ?? null;
     }
   }
   return null;

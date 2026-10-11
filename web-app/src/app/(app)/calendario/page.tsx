@@ -1,5 +1,5 @@
 import { getCurrentClub } from '@/lib/sessionServer';
-import { getMatchesForClub } from '@/services/fmp';
+import { getMatchesForClub } from '@/services/competition';
 import { MatchesBoard } from './MatchesBoard';
 
 export const dynamic = 'force-dynamic';
@@ -9,7 +9,7 @@ export default async function CalendarioPage() {
   if (!club) return null;
 
   try {
-    const data = await getMatchesForClub(club.code);
+    const data = await getMatchesForClub(club);
     return <MatchesBoard clubName={club.name} matches={data.matches} />;
   } catch (err) {
     console.error(err);
