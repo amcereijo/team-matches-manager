@@ -1,0 +1,54 @@
+.installCard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.installButton,
+.dismissButton {
+  align-self: flex-start;
+  min-height: 48px;
+  padding: 0 18px;
+  border-radius: var(--radius-md);
+  border: 0;
+  background: var(--accent);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.installButton:hover:not(:disabled),
+.dismissButton:hover {
+  background: var(--accent-hover);
+}
+
+.installButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.iosInstructions {
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.iosInstructions p,
+.iosInstructions ol {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text);
+  line-height: 1.45;
+}
+
+.iosInstructions ol {
+  padding-left: 18px;
+}

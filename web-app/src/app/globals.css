@@ -63,6 +63,36 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+html {
+  min-height: 100%;
+  min-height: 100dvh;
+}
+
+body {
+  min-height: 100%;
+  min-height: 100dvh;
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+
+/* Avoid double padding in the desktop shell; safe-area insets are typically
+   zero on desktop, so this is harmless. */
+.shellRoot,
+.shellRoot body {
+  padding: 0;
+}
+
+/* Minimum touch target per WCAG 2.5.5 / material guidelines. */
+.touchTarget {
+  min-width: 48px;
+  min-height: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 a {
   color: inherit;
 }

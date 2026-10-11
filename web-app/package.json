@@ -7,9 +7,13 @@
     "build": "next build",
     "start": "next start -p 3000",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "generate-pwa-icons": "node scripts/generate-pwa-icons.js"
   },
   "dependencies": {
+    "@serwist/core": "^9.5.13",
+    "@serwist/next": "^9.5.13",
+    "@serwist/sw": "^9.5.13",
     "axios": "^1.7.7",
     "cheerio": "^1.0.0",
     "he": "^1.2.0",
@@ -25,6 +29,7 @@
     "@types/react-dom": "^18.3.0",
     "eslint": "^8.57.1",
     "eslint-config-next": "^14.2.15",
+    "sharp": "^0.35.5",
     "typescript": "~5.3.3"
   }
 }

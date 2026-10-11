@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { InstallButton } from '@/components/InstallButton';
 import { getItem, setItem } from '@/services/storage';
 import styles from './configuracion.module.css';
 
@@ -57,6 +58,7 @@ export function SettingsForm() {
         <span className={styles.label}>Estado</span>
         <span className={styles.statusOk}>Preferencia guardada</span>
       </div>
+      <InstallButton />
     </div>
   );
 }

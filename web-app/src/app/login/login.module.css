@@ -218,6 +218,8 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  min-height: 48px;
+  min-width: 48px;
 }
 
 .summaryRemove:hover {
@@ -578,7 +580,7 @@
 }
 
 .button {
-  height: 46px;
+  height: 48px;
   background: var(--accent);
   color: #fff;
   border: 0;

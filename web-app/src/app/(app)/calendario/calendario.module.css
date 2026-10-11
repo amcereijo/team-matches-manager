@@ -312,6 +312,8 @@
 }
 
 .sendWhatsButton {
+  min-height: 48px;
+  min-width: 80px;
   padding: 8px 12px;
   background: var(--whats);
   color: #fff;
