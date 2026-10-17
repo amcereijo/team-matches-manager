@@ -1,4 +1,5 @@
 import { getCurrentClub } from '@/lib/sessionServer';
+import { getSentForClub } from '@/lib/server/sentStore';
 import { getMatchesForClub } from '@/services/competition';
 import { MatchesBoard } from './MatchesBoard';
 
@@ -10,7 +11,16 @@ export default async function CalendarioPage() {
 
   try {
     const data = await getMatchesForClub(club);
-    return <MatchesBoard clubName={club.name} matches={data.matches} />;
+    const sent = await getSentForClub(club);
+    return (
+      <MatchesBoard
+        clubName={club.name}
+        competition={club.competition}
+        clubCode={club.code}
+        matches={data.matches}
+        initialSent={sent}
+      />
+    );
   } catch (err) {
     console.error(err);
     return <MatchesBoard clubName={club.name} error="No se pudo cargar la agenda" />;

@@ -17,6 +17,7 @@ export type Game = {
   map: string | null;
   localCode: number | null;
   visitCode: number | null;
+  gameId: number | null;
 };
 
 export type Field = {

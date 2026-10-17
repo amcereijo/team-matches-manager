@@ -1,7 +1,9 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import type { CompetitionId } from '@/constants/competitions';
 import type { Game } from '@/types';
+import { deriveMatchKey } from '@/lib/matchKey';
 import { getItem, setItem } from '@/services/storage';
 import styles from './calendario.module.css';
 
@@ -67,6 +69,12 @@ function formatDayLabel(date?: string | null): string {
     .replace('.', '');
 }
 
+function formatSentDate(sentAt: string): string {
+  const d = new Date(sentAt);
+  if (isNaN(d.getTime())) return sentAt;
+  return d.toLocaleDateString('es-ES', { month: 'short', day: 'numeric' });
+}
+
 function buildWhatsappUrl(game: Game, clubName: string): string {
   const dateStr = formatMatchDate(game.date, game.time);
   let text = '';
@@ -98,14 +106,21 @@ function isMatchReady(game: Game): boolean {
 
 export function MatchesBoard({
   clubName,
+  competition,
+  clubCode,
   matches,
   error,
+  initialSent = {},
 }: {
   clubName: string;
+  competition?: CompetitionId;
+  clubCode?: number;
   matches?: Game[];
   error?: string;
+  initialSent?: Record<string, string>;
 }) {
   const [today, setToday] = useState<Date | null>(null);
+  const [localSent, setLocalSent] = useState<Record<string, string>>(initialSent);
 
   useEffect(() => {
     setToday(new Date());
@@ -163,6 +178,12 @@ export function MatchesBoard({
           const day = formatDayLabel(row.date);
           const time = row.time ?? '';
           const ready = isMatchReady(row);
+          const matchKey =
+            competition && clubCode !== undefined
+              ? deriveMatchKey(competition, clubCode, row)
+              : null;
+          const sentAt = ready && matchKey ? localSent[matchKey] : undefined;
+          const isSent = Boolean(sentAt);
           const isZebra = i % 2 === 1;
           const prevKey = i > 0 ? matchWeekKey(matches[i - 1]) : null;
           const showSeparator =
@@ -181,7 +202,7 @@ export function MatchesBoard({
               key={`${row.date}-${row.time}-${row.local}-${row.visit}-${i}`}
               className={`${styles.matchRow} ${isZebra ? styles.zebra : ''} ${
                 ready ? '' : styles.notReady
-              }`}
+              } ${isSent ? styles.sentRow : ''}`}
             >
               <div className={styles.matchMain}>
                 <div className={styles.matchTopRow}>
@@ -244,7 +265,12 @@ export function MatchesBoard({
                 </div>
               </div>
               <div className={styles.matchActions}>
-                {isToday ? (
+                {sentAt && matchKey ? (
+                  <span className={styles.sentBadge}>
+                    <span aria-hidden>✓</span>
+                    <span>Enviado · {formatSentDate(sentAt)}</span>
+                  </span>
+                ) : isToday ? (
                   <span
                     className={styles.todayPill}
                     aria-label="Partido de hoy"
@@ -260,6 +286,20 @@ export function MatchesBoard({
                     target="_blank"
                     rel="noopener noreferrer"
                     aria-label={`Compartir ${row.local} vs ${row.visit} por WhatsApp`}
+                    onClick={(e) => {
+                      if (!matchKey) return;
+                      e.preventDefault();
+                      window.open(buildWhatsappUrl(row, clubName), '_blank');
+                      const now = new Date().toISOString();
+                      setLocalSent((prev) => ({ ...prev, [matchKey]: now }));
+                      fetch('/api/matches/sent', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ matchKey }),
+                      }).catch(() => {
+                        // Optimistic state stays for the current session.
+                      });
+                    }}
                   >
                     <span aria-hidden>📱</span>
                     <span>Enviar</span>
@@ -357,6 +397,12 @@ function ShareInfoPanel() {
             El botón <strong>Enviar</strong> abre una conversación de WhatsApp
             con el mensaje del partido ya escrito. Necesitas tener WhatsApp
             instalado o usar la versión web.
+          </p>
+
+          <p className={styles.infoIntro}>
+            El marcador <strong>Enviado</strong> se registra en el momento de
+            pulsar Enviar; la app no puede confirmar que el mensaje haya sido
+            enviado desde WhatsApp.
           </p>
 
           <div className={styles.infoDevices}>

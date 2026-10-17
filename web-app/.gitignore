@@ -6,6 +6,7 @@ out/
 *.log
 .DS_Store
 *.tsbuildinfo
+data/
 public/icons/*.tmp
 public/sw.js
 public/sw.js.map

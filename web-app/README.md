@@ -171,6 +171,53 @@ The app is an installable PWA (manifest at `/manifest.webmanifest`, service work
 - Android/Chrome: Configuración -> "Instalar app". iOS Safari: Share -> "Añadir a la pantalla de inicio".
 - The service worker is only active in production builds (`npm run build && npm run start`).
 
+## Match-send tracking
+
+The Calendario can remember which matches a club has already shared via WhatsApp:
+
+- Tapping **Enviar** opens WhatsApp and marks the match as sent in a server-side store.
+- Already-sent rows render a **"✓ Enviado · <fecha>"** pill instead of the Enviar button.
+- The marker is optimistic: the UI flips immediately, then a `POST /api/matches/sent` persists it.
+
+### Store backends
+
+The store is implemented in `src/lib/server/sentStore.ts` and uses `@libsql/client`, which can talk to either a local SQLite file or a remote Turso/libSQL database depending on the env vars:
+
+| Env var | Local dev | Vercel |
+| ------- | --------- | ------ |
+| `SENT_STORE_URL` | `file:./data/sent.sqlite` (default, lazy-created) | `libsql://<db>-<org>.turso.io` |
+| `SENT_STORE_AUTH_TOKEN` | leave unset | Turso DB token |
+
+Local dev writes to the gitignored `data/` directory. Production requires a Turso (or any libSQL-compatible remote) database.
+
+### Setting up Turso for production
+
+1. Install the Turso CLI (or use the web dashboard): `brew install tursodatabase/tap/turso`.
+2. Authenticate: `turso auth login`.
+3. Create the database:
+
+   ```bash
+   turso db create team-matches-sent
+   ```
+
+4. Get the connection URL and a token:
+
+   ```bash
+   turso db show team-matches-sent
+   turso db tokens create team-matches-sent
+   ```
+
+5. Add both values to the Vercel project:
+
+   - `SENT_STORE_URL` = the `libsql://…` URL
+   - `SENT_STORE_AUTH_TOKEN` = the generated token
+
+6. Redeploy. The `match_send` table is created automatically on the first request (`CREATE TABLE IF NOT EXISTS`).
+
+### Setting up local development
+
+No extra setup is required. The default config uses `file:./data/sent.sqlite`. If you want a different local path, set `SENT_STORE_URL` in `web-app/.env.local`, e.g. `SENT_STORE_URL=file:/tmp/sent.sqlite`.
+
 ## Deploy
 
-This is a standard Next.js app, so any platform that supports Node 18+ works (Vercel, Render, Fly, a Docker container, …). On Vercel the project is detected as "Next.js" with no extra config.
+This is a standard Next.js app, so any platform that supports Node 18+ works (Vercel, Render, Fly, a Docker container, …). On Vercel the project is detected as "Next.js" with no extra config. The production deployment needs the `SENT_STORE_URL` + `SENT_STORE_AUTH_TOKEN` environment variables configured as described above.

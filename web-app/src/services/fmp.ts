@@ -35,13 +35,15 @@ function isClubMatch(team: string | null, aliases: string[]): boolean {
   return aliases.some((alias) => upper === alias || upper.startsWith(`${alias} `));
 }
 
-function readParamGameCodes(el: any): { localCode: number | null; visitCode: number | null } {
+function readParamGame(el: any): { gameId: number | null; localCode: number | null; visitCode: number | null } {
   const raw = (el as any).attribs?.['param_game'];
-  if (typeof raw !== 'string') return { localCode: null, visitCode: null };
+  if (typeof raw !== 'string') return { gameId: null, localCode: null, visitCode: null };
   const parts = raw.split('_');
+  const gameId = parts[0] !== undefined ? Number.parseInt(parts[0], 10) : NaN;
   const localCode = parts[2] !== undefined ? Number.parseInt(parts[2], 10) : NaN;
   const visitCode = parts[3] !== undefined ? Number.parseInt(parts[3], 10) : NaN;
   return {
+    gameId: Number.isFinite(gameId) ? gameId : null,
     localCode: Number.isFinite(localCode) ? localCode : null,
     visitCode: Number.isFinite(visitCode) ? visitCode : null,
   };
@@ -73,7 +75,7 @@ export async function fetchFmpMatches(): Promise<{ teams: Set<string>; fields: M
     const visit = decodeHtml($(nodes[15]).html());
     const location = trimLocation(decodeHtml($(nodes[19]).html()));
     const map = LOCATION_MAP[location] ?? '';
-    const { localCode, visitCode } = readParamGameCodes(el);
+    const { gameId, localCode, visitCode } = readParamGame(el);
 
     if (local) teams.add(local);
     if (visit) teams.add(visit);
@@ -89,6 +91,7 @@ export async function fetchFmpMatches(): Promise<{ teams: Set<string>; fields: M
       map: map || null,
       localCode,
       visitCode,
+      gameId,
     });
   });
 
