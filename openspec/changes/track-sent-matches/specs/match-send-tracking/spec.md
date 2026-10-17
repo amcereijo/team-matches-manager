@@ -5,11 +5,11 @@ Records when a club marks one of its upcoming matches as already shared with the
 ## ADDED Requirements
 
 ### Requirement: Match identity uses the upstream sidgad game id when available
-The web-app's match parsers in `src/services/fmp.ts` and `src/services/fgp.ts` MUST extract the first underscore-separated segment of each row's `param_game` attribute and surface it on the `Game` shape as `gameId: number | null`. When `param_game` is missing or malformed (fewer than four underscore-separated parts), `gameId` MUST be `null`. The parsers MUST NOT throw.
+The web-app's match parsers in `src/services/fmp.ts` and `src/services/fgp.ts` MUST extract the fifth underscore-separated segment of each row's `param_game` attribute (the sidgad fixture id) and surface it on the `Game` shape as `gameId: number | null`. The parsers MUST also continue to extract `param_game[2]` and `param_game[3]` as `localCode` and `visitCode`. When `param_game` is missing or malformed (fewer than five underscore-separated parts), `gameId` MUST be `null`. The parsers MUST NOT throw.
 
 #### Scenario: FGP row with a well-formed `param_game`
-- **WHEN** a `tr.fila_agenda` element has `param_game="12345_31_438_412"`
-- **THEN** the parsed `Game` has `gameId: 12345` in addition to `localCode: 438` and `visitCode: 412`
+- **WHEN** a `tr.fila_agenda` element has `param_game="2_15_438_411_4853980"`
+- **THEN** the parsed `Game` has `gameId: 4853980` in addition to `localCode: 438` and `visitCode: 411`
 
 #### Scenario: Row with a missing `param_game` attribute
 - **WHEN** a `tr.fila_agenda` element has no `param_game` attribute
@@ -19,8 +19,8 @@ The web-app's match parsers in `src/services/fmp.ts` and `src/services/fgp.ts` M
 The web-app MUST compute a stable string `matchKey` for every match before it reaches the Calendario UI. When `gameId` is non-null, `matchKey` MUST be `"<competition>:<gameId>"` where `<competition>` is the logged-in club's competition id (`FMP` or `FGP`). When `gameId` is null, `matchKey` MUST be a tuple-shaped string `"tuple:<competition>:<club_code>:<local>:<visit>:<date>:<time>"` whose components are the existing `Game` fields uppercased, trimmed, and joined with a single colon separator.
 
 #### Scenario: Match with upstream id
-- **WHEN** a match for FGP club 438 has `gameId: 12345`
-- **THEN** the match's `matchKey` is the string `"FGP:12345"`
+- **WHEN** a match for FGP club 438 has `gameId: 4853980`
+- **THEN** the match's `matchKey` is the string `"FGP:4853980"`
 
 #### Scenario: Match without upstream id
 - **WHEN** a match for FGP club 438 has `gameId: null`, `local: "HL NOROESTE"`, `visit: "RIVAL"`, `date: "18/10/2026"`, `time: "18:30"`
@@ -47,16 +47,16 @@ The web-app MUST persist sent matches in a server-side store keyed by `(club_cod
 The production store MUST be a remote libSQL database reachable via `SENT_STORE_URL` and authenticated with `SENT_STORE_AUTH_TOKEN`. Local development MAY use a local SQLite file (`file:./data/sent.sqlite`) when `SENT_STORE_URL` is unset.
 
 #### Scenario: First mark
-- **WHEN** club 438 (FMP) sends a successful POST for `matchKey: "FMP:99"`
-- **THEN** the store contains one row with `club_code: 438`, `competition: "FMP"`, `match_key: "FMP:99"`, `sent_at: <current ISO timestamp>`; a subsequent GET returns `{ sent: { "FMP:99": "<that same timestamp>" } }`
+- **WHEN** club 438 (FMP) sends a successful POST for `matchKey: "FMP:4853980"`
+- **THEN** the store contains one row with `club_code: 438`, `competition: "FMP"`, `match_key: "FMP:4853980"`, `sent_at: <current ISO timestamp>`; a subsequent GET returns `{ sent: { "FMP:4853980": "<that same timestamp>" } }`
 
 #### Scenario: Second mark of the same match is idempotent
-- **WHEN** the same club sends a second POST for `matchKey: "FMP:99"` within the same minute
+- **WHEN** the same club sends a second POST for `matchKey: "FMP:4853980"` within the same minute
 - **THEN** the store still contains exactly one row for that `(club, match_key)` and `sent_at` is the timestamp from the first mark; the second POST responds with HTTP 200 and that original `sent_at`
 
 #### Scenario: Different clubs do not see each other's marks
-- **WHEN** club 438 has marked `matchKey: "FMP:99"` and club 411 requests its own sent set
-- **THEN** the response for club 411 does not contain `"FMP:99"`
+- **WHEN** club 438 has marked `matchKey: "FMP:4853980"` and club 411 requests its own sent set
+- **THEN** the response for club 411 does not contain `"FMP:4853980"`
 
 #### Scenario: Unauthenticated request
 - **WHEN** a request to `/api/matches/sent` arrives with no iron-session club

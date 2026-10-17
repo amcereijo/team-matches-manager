@@ -5,7 +5,7 @@ Today the "Enviar" button on each match in `calendario/MatchesBoard` opens a `wa
 ## What Changes
 
 - Add server-side persistence for sent matches inside the **web-app** (no new backend process — keep the app self-contained as decided in `revert-competition-api-to-web-app`).
-- Expose the upstream sidgad `param_game` game id on the `Game` type (it is already parsed in `fmp.ts` / `fgp.ts` for `localCode` / `visitCode` but the id segment is discarded) and use it — namespaced by competition — as the stable match identity for sent records. Fall back to a normalized composite tuple for rows where `param_game` is missing or malformed (consistent with the defensive posture in `match-filter-by-param-game`).
+- Expose the upstream sidgad `param_game` fixture id (fifth underscore-separated segment) on the `Game` type (it is already parsed in `fmp.ts` / `fgp.ts` for `localCode` / `visitCode` but the fixture-id segment is discarded) and use it — namespaced by competition — as the stable match identity for sent records. Fall back to a normalized composite tuple for rows where `param_game` is missing or malformed (consistent with the defensive posture in `match-filter-by-param-game`).
 - Add two thin routes under `web-app/src/app/api/matches/sent/`:
   - `GET /api/matches/sent` — returns the current club's sent set as `{ sent: { [matchKey]: sentAt } }`.
   - `POST /api/matches/sent` — body `{ matchKey }`; idempotent insert; requires the match to be ready (`date` and a non-sentinel `time`).

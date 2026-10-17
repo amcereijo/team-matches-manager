@@ -1,7 +1,7 @@
 ## 1. Identity: surface upstream game id
 
 - [x] 1.1 Add `gameId: number | null` to the `Game` type in `web-app/src/types/index.ts`
-- [x] 1.2 In `web-app/src/services/fmp.ts`, extend `readParamGameCodes` (or add a sibling helper) to also return `gameId` from `param_game` parts[0], and surface it on every pushed `Game`
+- [x] 1.2 In `web-app/src/services/fmp.ts`, extend `readParamGameCodes` (or add a sibling helper) to also return `gameId` from `param_game` parts[4] (the sidgad fixture id), and surface it on every pushed `Game`
 - [x] 1.3 Apply the same change in `web-app/src/services/fgp.ts`
 - [x] 1.4 Add a `matchKey` derivation helper in `web-app/src/lib/matchKey.ts` (`"<competition>:<gameId>"` when `gameId` non-null, else `tuple:<competition>:<club_code>:<local>:<visit>:<date>:<time>`)
 

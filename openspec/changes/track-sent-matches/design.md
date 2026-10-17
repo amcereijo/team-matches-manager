@@ -1,6 +1,6 @@
 ## Context
 
-The web-app (`web-app/`) is a Next.js 14 App Router app that fetches sidgad upstream HTML server-side, parses it into a `Game[]` per club, and renders the Calendario. The current `Game` shape (in `src/types/index.ts`) has no stable per-match id — `localCode`/`visitCode` exist but two clubs can play multiple times in a season, so they don't disambiguate. The upstream `param_game` attribute already carries `<gameId>_<seasonId>_<localCode>_<visitCode>` and is partially parsed in `fmp.ts` and `fgp.ts` to extract `localCode`/`visitCode`; the `gameId` segment is discarded.
+The web-app (`web-app/`) is a Next.js 14 App Router app that fetches sidgad upstream HTML server-side, parses it into a `Game[]` per club, and renders the Calendario. The current `Game` shape (in `src/types/index.ts`) has no stable per-match id — `localCode`/`visitCode` exist but two clubs can play multiple times in a season, so they don't disambiguate. The upstream `param_game` attribute carries `..._<localCode>_<visitCode>_<fixtureId>` (five underscore-separated segments) and is partially parsed in `fmp.ts` and `fgp.ts` to extract `localCode`/`visitCode`; the fixture-id segment is discarded.
 
 The Calendario's `MatchesBoard.tsx` renders an "Enviar" link per row that opens `wa.me/?text=...` in a new tab. Today there is no server-side record of which matches have been shared.
 
@@ -54,11 +54,11 @@ The store connects lazily on first use. Environment variables:
 
 The route module initialises the table on open with `CREATE TABLE IF NOT EXISTS …`.
 
-### D3 — Match identity: `param_game` first segment + tuple fallback
+### D3 — Match identity: `param_game` fixture id + tuple fallback
 
-**Choice:** Surface `param_game` first segment as `gameId: number | null` on `Game`. Derive `matchKey = "<competition>:<gameId>"` when `gameId` is non-null, else `matchKey = "tuple:<competition>:<club_code>:<local>:<visit>:<date>:<time>"`.
+**Choice:** Surface `param_game` fifth segment (the fixture id) as `gameId: number | null` on `Game`. Derive `matchKey = "<competition>:<gameId>"` when `gameId` is non-null, else `matchKey = "tuple:<competition>:<club_code>:<local>:<visit>:<date>:<time>"`.
 
-**Why:** This is the safest per-match identity the upstream offers. `param_game` is sidgad's own primary key for a fixture; it survives date/time corrections by the federation. The fallback covers the existing "defensive parsing" case already accepted by `match-filter-by-param-game` spec. Namespacing by `competition` keeps FMP and FGP id spaces separate (sidgad's id sequences are independent per federation).
+**Why:** The fifth segment is sidgad's own unique fixture id (e.g. `4854003` in `param_game="2_15_415_438_4854003"`). It survives date/time corrections by the federation and is unique per match. The fallback covers the existing "defensive parsing" case already accepted by `match-filter-by-param-game` spec. Namespacing by `competition` keeps FMP and FGP id spaces separate (sidgad's id sequences are independent per federation).
 
 **Alternatives considered:**
 - *Pure composite tuple key on every match:* rejected — brittleness on time corrections means a marked match could "disappear" from the sent set after the federation updates the kickoff time.
@@ -116,8 +116,8 @@ The `matchKey` is computed server-side in the Calendario page (right where match
 
 - **Turso database must be provisioned before production deploy** → Document the setup steps; the app will fail to connect on first request if `SENT_STORE_URL` + `SENT_STORE_AUTH_TOKEN` are missing in production.
 - **Local dev data loss if the SQLite file is wiped** → Document `SENT_STORE_URL` / `SENT_STORE_AUTH_TOKEN` in `.env.local.example`; the default local path (`file:./data/sent.sqlite`) writes to the gitignored `data/` directory.
-- **Concurrent writes from two tabs of the same club** → SQLite in WAL mode (default in `better-sqlite3`) handles this; the `INSERT OR IGNORE` + follow-up SELECT is correct under contention because `sent_at` is read after the insert returns.
-- **Match id drift if sidgad changes its `param_game` schema** → The tuple fallback covers the missing-id case; if sidgad changes the segment order, our `parts[0]` would silently change meaning. Mitigation: a startup-time sanity log of the first parsed `param_game` value (one line at boot) so a regression is visible.
+- **Concurrent writes from two tabs of the same club** → libSQL/Turso serialises writes on the primary; the `INSERT OR IGNORE` + follow-up SELECT is correct under contention because `sent_at` is read after the insert returns.
+- **Match id drift if sidgad changes its `param_game` schema** → The tuple fallback covers the missing-id case; if sidgad changes the segment order, our `parts[4]` would silently change meaning. Mitigation: a startup-time sanity log of the first parsed `param_game` value (one line at boot) so a regression is visible.
 - **Optimistic semantics mislead users** → The info-panel sentence makes the model explicit; spec requires it (`Requirement: Optimistic semantics are documented in the UI`).
 - **`gameId` collision if sidgad ever shares an id across FMP/FGP** → Mitigated by namespacing `matchKey` with the competition prefix (`FMP:99` vs `FGP:99`); the spec mandates this in `Requirement: A stable match key is derived for each match`.
 - **Remote libSQL latency on the Calendario server render** → The sent set read is a single indexed `SELECT`; Turso is low-latency, but if it becomes a bottleneck the page could fallback to passing an empty set and hydrating client-side. This would trade the no-flash guarantee for resilience, which is not required in v1.

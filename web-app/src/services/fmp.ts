@@ -39,9 +39,11 @@ function readParamGame(el: any): { gameId: number | null; localCode: number | nu
   const raw = (el as any).attribs?.['param_game'];
   if (typeof raw !== 'string') return { gameId: null, localCode: null, visitCode: null };
   const parts = raw.split('_');
-  const gameId = parts[0] !== undefined ? Number.parseInt(parts[0], 10) : NaN;
+  // sidgad format: <...>_<...>_<localCode>_<visitCode>_<fixtureId>
+  // e.g. "2_15_415_438_4854003" → local 415, visit 438, fixture 4854003
   const localCode = parts[2] !== undefined ? Number.parseInt(parts[2], 10) : NaN;
   const visitCode = parts[3] !== undefined ? Number.parseInt(parts[3], 10) : NaN;
+  const gameId = parts[4] !== undefined ? Number.parseInt(parts[4], 10) : NaN;
   return {
     gameId: Number.isFinite(gameId) ? gameId : null,
     localCode: Number.isFinite(localCode) ? localCode : null,
