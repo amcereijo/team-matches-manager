@@ -1,5 +1,6 @@
 import { fetchFgpMatches } from './fgp';
 import { fetchFmpMatches } from './fmp';
+import { parseSidgadDate } from '@/lib/matchDate';
 import type { ClubType, Field, MatchesResponse, Team } from '@/types';
 
 function normalize(name: string): string {
@@ -42,6 +43,16 @@ export async function getMatchesForClub(club: ClubType): Promise<MatchesResponse
       isClubMatch(m.local, aliases) ||
       isClubMatch(m.visit, aliases),
   );
+  // Drop matches that have already happened. sidgad keeps played fixtures in
+  // its agenda; the UI should only surface upcoming ones. Matches without a
+  // parseable date/time (pending fixtures) are kept so the user still sees the
+  // "Pendiente" badge until the federation confirms a time.
+  const now = Date.now();
+  const upcoming = filtered.filter((m) => {
+    const kickoff = parseSidgadDate(m.date, m.time);
+    if (!kickoff) return true;
+    return kickoff.getTime() >= now;
+  });
 
   const teamList: Team[] = Array.from(teams)
     .sort((a, b) => a.localeCompare(b, 'es'))
@@ -56,6 +67,6 @@ export async function getMatchesForClub(club: ClubType): Promise<MatchesResponse
     club: { code: club.code, name: club.name },
     teams: teamList,
     fields: fieldList,
-    matches: filtered,
+    matches: upcoming,
   };
 }

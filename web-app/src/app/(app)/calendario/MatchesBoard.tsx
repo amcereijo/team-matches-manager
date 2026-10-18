@@ -4,24 +4,11 @@ import React, { useEffect, useState } from 'react';
 import type { CompetitionId } from '@/constants/competitions';
 import type { Game } from '@/types';
 import { deriveMatchKey } from '@/lib/matchKey';
+import { parseSidgadDate } from '@/lib/matchDate';
 import { getItem, setItem } from '@/services/storage';
 import styles from './calendario.module.css';
 
 const INFO_DISMISS_KEY = 'calendario.infoDismissed';
-
-function pad(n: string): string {
-  return n.padStart(2, '0');
-}
-
-function parseFmpDate(date?: string | null, time?: string | null): Date | null {
-  if (!date) return null;
-  const [day, month, year] = date.split('/');
-  if (!day || !month || !year) return null;
-  const [hh = '00', mm = '00'] = (time ?? '').split(':');
-  const iso = `${year}-${pad(month)}-${pad(day)}T${pad(hh)}:${pad(mm)}:00`;
-  const d = new Date(iso);
-  return isNaN(d.getTime()) ? null : d;
-}
 
 const UNDATED_KEY = 'undated';
 
@@ -35,12 +22,12 @@ function isoWeekKey(d: Date): string {
 }
 
 function matchWeekKey(row: Game): string {
-  const d = parseFmpDate(row.date, row.time);
+  const d = parseSidgadDate(row.date, row.time);
   return d ? isoWeekKey(d) : UNDATED_KEY;
 }
 
 function isMatchToday(row: Game, today: Date): boolean {
-  const d = parseFmpDate(row.date, row.time);
+  const d = parseSidgadDate(row.date, row.time);
   if (!d) return false;
   return (
     d.getFullYear() === today.getFullYear() &&
@@ -50,7 +37,7 @@ function isMatchToday(row: Game, today: Date): boolean {
 }
 
 function formatMatchDate(date?: string | null, time?: string | null): string {
-  const d = parseFmpDate(date, time);
+  const d = parseSidgadDate(date, time);
   if (!d) return '';
   return d.toLocaleDateString('es-ES', {
     weekday: 'long',
@@ -62,7 +49,7 @@ function formatMatchDate(date?: string | null, time?: string | null): string {
 }
 
 function formatDayLabel(date?: string | null): string {
-  const d = parseFmpDate(date, null);
+  const d = parseSidgadDate(date, null);
   if (!d) return '';
   return d
     .toLocaleDateString('es-ES', { weekday: 'long', day: '2-digit', month: 'short' })

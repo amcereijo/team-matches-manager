@@ -1,18 +1,9 @@
 import Link from 'next/link';
 import { COMPETITIONS } from '@/constants/competitions';
 import { getCurrentClub } from '@/lib/sessionServer';
+import { parseSidgadDate } from '@/lib/matchDate';
 import { getMatchesForClub } from '@/services/competition';
 import styles from './main.module.css';
-
-function parseFmpDate(date?: string | null, time?: string | null): Date | null {
-  if (!date) return null;
-  const [day, month, year] = date.split('/');
-  if (!day || !month || !year) return null;
-  const [hh = '00', mm = '00'] = (time ?? '').split(':');
-  const iso = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}T${hh.padStart(2, '0')}:${mm.padStart(2, '0')}:00`;
-  const d = new Date(iso);
-  return isNaN(d.getTime()) ? null : d;
-}
 
 function formatLong(d: Date | null): string {
   if (!d) return '';
@@ -35,8 +26,8 @@ export default async function HomePage() {
     const data = await getMatchesForClub(club);
     totalMatches = data.matches.length;
     const sorted = [...data.matches].sort((a, b) => {
-      const da = parseFmpDate(a.date, a.time)?.getTime() ?? Infinity;
-      const db = parseFmpDate(b.date, b.time)?.getTime() ?? Infinity;
+      const da = parseSidgadDate(a.date, a.time)?.getTime() ?? Infinity;
+      const db = parseSidgadDate(b.date, b.time)?.getTime() ?? Infinity;
       return da - db;
     });
     nextMatch = sorted[0] ?? null;
@@ -44,7 +35,7 @@ export default async function HomePage() {
     console.error('Home: failed to load matches', err);
   }
 
-  const nextDate = nextMatch ? parseFmpDate(nextMatch.date, nextMatch.time) : null;
+  const nextDate = nextMatch ? parseSidgadDate(nextMatch.date, nextMatch.time) : null;
 
   return (
     <div className={styles.page}>
