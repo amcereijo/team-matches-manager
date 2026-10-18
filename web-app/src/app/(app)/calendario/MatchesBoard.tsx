@@ -1,14 +1,16 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import type { CompetitionId } from '@/constants/competitions';
 import type { Game } from '@/types';
+import { clubAliases, isClubMatch } from '@/lib/clubTeams';
 import { deriveMatchKey } from '@/lib/matchKey';
 import { parseSidgadDate } from '@/lib/matchDate';
 import { getItem, setItem } from '@/services/storage';
 import styles from './calendario.module.css';
 
 const INFO_DISMISS_KEY = 'calendario.infoDismissed';
+const TEAM_FILTER_KEY = 'calendario.teamFilter';
 
 const UNDATED_KEY = 'undated';
 
@@ -108,6 +110,40 @@ export function MatchesBoard({
 }) {
   const [today, setToday] = useState<Date | null>(null);
   const [localSent, setLocalSent] = useState<Record<string, string>>(initialSent);
+  const [selectedSquads, setSelectedSquads] = useState<string[]>([]);
+  const [filterHydrated, setFilterHydrated] = useState(false);
+
+  // Distinct, sorted list of the user's own squads that appear in the
+  // upcoming agenda. Mirrors the server-side alias rule so what we offer
+  // here matches what `getMatchesForClub` already filtered down to.
+  const squadList = useMemo<string[]>(() => {
+    if (!matches) return [];
+    const aliases = clubAliases(clubName);
+    const set = new Set<string>();
+    for (const row of matches) {
+      if (isClubMatch(row.local, aliases) && row.local) set.add(row.local);
+      if (isClubMatch(row.visit, aliases) && row.visit) set.add(row.visit);
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'es'));
+  }, [matches, clubName]);
+
+  // Selected squad names, intersected with the current squad list so a
+  // squad that disappeared upstream falls out of the active filter.
+  const activeSelection = useMemo(
+    () => selectedSquads.filter((s) => squadList.includes(s)),
+    [selectedSquads, squadList],
+  );
+
+  // Filtered list shown to the user. An empty selection is equivalent to
+  // "Todos" — every fixture is visible.
+  const visibleMatches = useMemo<Game[]>(() => {
+    if (!matches) return [];
+    if (activeSelection.length === 0) return matches;
+    const selected = new Set(activeSelection);
+    return matches.filter(
+      (m) => (m.local && selected.has(m.local)) || (m.visit && selected.has(m.visit)),
+    );
+  }, [matches, activeSelection]);
 
   useEffect(() => {
     setToday(new Date());
@@ -117,6 +153,39 @@ export function MatchesBoard({
     document.addEventListener('visibilitychange', refresh);
     return () => document.removeEventListener('visibilitychange', refresh);
   }, []);
+
+  // Hydrate the persisted squad selection on first mount. Stale names (not
+  // present in the current squad list) are dropped silently per the spec;
+  // missing/corrupt values fall back to "Todos" (empty selection).
+  useEffect(() => {
+    (async () => {
+      const raw = await getItem(TEAM_FILTER_KEY);
+      let parsed: unknown = null;
+      if (raw) {
+        try {
+          parsed = JSON.parse(raw);
+        } catch {
+          parsed = null;
+        }
+      }
+      if (Array.isArray(parsed)) {
+        const cleaned = parsed.filter(
+          (v): v is string => typeof v === 'string' && v.length > 0,
+        );
+        setSelectedSquads(cleaned);
+      }
+      setFilterHydrated(true);
+    })();
+  }, []);
+
+  // Persist selection on change, but only after hydration so we never
+  // overwrite stored value with the empty default on first paint. Errors
+  // from `setItem` (quota, private mode) are already swallowed inside the
+  // storage helper.
+  useEffect(() => {
+    if (!filterHydrated) return;
+    setItem(TEAM_FILTER_KEY, JSON.stringify(selectedSquads));
+  }, [filterHydrated, selectedSquads]);
   if (error) {
     return (
       <div className={styles.page}>
@@ -141,14 +210,19 @@ export function MatchesBoard({
     );
   }
 
-  if (matches.length === 0) {
+  if (visibleMatches.length === 0) {
+    const filteredByTeam = squadList.length > 0 && matches.length > 0;
     return (
       <div className={styles.page}>
         <PageHeader count={0} />
         <div className={styles.noMatches}>
-          <span className={styles.noMatchesTitle}>Sin partidos por ahora</span>
+          <span className={styles.noMatchesTitle}>
+            {filteredByTeam ? 'Ningún partido coincide con el filtro' : 'Sin partidos por ahora'}
+          </span>
           <span className={styles.noMatchesHint}>
-            Vuelve más tarde o revisa la configuración.
+            {filteredByTeam
+              ? 'Marca más equipos arriba para ver sus partidos.'
+              : 'Vuelve más tarde o revisa la configuración.'}
           </span>
         </div>
       </div>
@@ -157,10 +231,17 @@ export function MatchesBoard({
 
   return (
     <div className={styles.page}>
-      <PageHeader count={matches.length} />
+      <PageHeader count={visibleMatches.length} />
       <ShareInfoPanel />
+      {squadList.length > 0 && (
+        <TeamFilter
+          squadList={squadList}
+          selected={activeSelection}
+          onChange={setSelectedSquads}
+        />
+      )}
       <div className={styles.table}>
-        {matches.map((row, i) => {
+        {visibleMatches.map((row, i) => {
           const formatted = formatMatchDate(row.date, row.time);
           const day = formatDayLabel(row.date);
           const time = row.time ?? '';
@@ -172,7 +253,7 @@ export function MatchesBoard({
           const sentAt = ready && matchKey ? localSent[matchKey] : undefined;
           const isSent = Boolean(sentAt);
           const isZebra = i % 2 === 1;
-          const prevKey = i > 0 ? matchWeekKey(matches[i - 1]) : null;
+          const prevKey = i > 0 ? matchWeekKey(visibleMatches[i - 1]) : null;
           const showSeparator =
             i === 0 ? false : prevKey !== matchWeekKey(row);
           const isToday = today ? isMatchToday(row, today) : false;
@@ -426,6 +507,130 @@ function ShareInfoPanel() {
           <button type="button" className={styles.infoDismiss} onClick={dismiss}>
             No volver a mostrar
           </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TeamFilter({
+  squadList,
+  selected,
+  onChange,
+}: {
+  squadList: string[];
+  selected: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  const todosChecked = squadList.length > 0 && selected.length === squadList.length;
+
+  function toggleSquad(name: string) {
+    if (selected.includes(name)) {
+      onChange(selected.filter((s) => s !== name));
+    } else {
+      onChange([...selected, name]);
+    }
+  }
+
+  function toggleTodos() {
+    onChange(todosChecked ? [] : [...squadList]);
+  }
+
+  // Close on outside click + Escape; do not close when the click lands
+  // inside the panel itself.
+  const panelRef = React.useRef<HTMLDivElement | null>(null);
+  const triggerRef = React.useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    function onMouseDown(e: MouseEvent) {
+      const target = e.target as Node | null;
+      if (panelRef.current && target && panelRef.current.contains(target)) return;
+      setOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
+    }
+    document.addEventListener('mousedown', onMouseDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onMouseDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const triggerLabel =
+    selected.length === 0 || todosChecked
+      ? 'Todos los equipos'
+      : selected.length === 1
+        ? '1 equipo'
+        : `${selected.length} de ${squadList.length} equipos`;
+
+  return (
+    <div className={styles.teamFilter}>
+      <button
+        type="button"
+        className={styles.teamFilterTrigger}
+        ref={triggerRef}
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-haspopup="dialog"
+      >
+        <span aria-hidden>⚽</span>
+        <span className={styles.teamFilterTriggerLabel}>Equipos</span>
+        <span className={styles.teamFilterBadge}>{triggerLabel}</span>
+        <svg
+          className={`${styles.teamFilterChevron} ${open ? styles.open : ''}`}
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden
+        >
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </button>
+      {open && (
+        <div
+          ref={panelRef}
+          className={styles.teamFilterPanel}
+          role="dialog"
+          aria-label="Filtrar por equipo"
+        >
+          <label className={styles.teamFilterOption}>
+            <input
+              type="checkbox"
+              className={styles.teamFilterOptionCheck}
+              checked={todosChecked}
+              onChange={toggleTodos}
+              aria-label="Todos los equipos"
+            />
+            <span className={styles.teamFilterOptionLabel}>Todos</span>
+          </label>
+          <div className={styles.teamFilterDivider} aria-hidden />
+          {squadList.map((squad) => {
+            const checked = selected.includes(squad);
+            return (
+              <label key={squad} className={styles.teamFilterOption}>
+                <input
+                  type="checkbox"
+                  className={styles.teamFilterOptionCheck}
+                  checked={checked}
+                  onChange={() => toggleSquad(squad)}
+                  aria-label={`Filtrar por ${squad}`}
+                />
+                <span className={styles.teamFilterOptionLabel}>{squad}</span>
+              </label>
+            );
+          })}
         </div>
       )}
     </div>

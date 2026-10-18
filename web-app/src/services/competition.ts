@@ -1,28 +1,8 @@
 import { fetchFgpMatches } from './fgp';
 import { fetchFmpMatches } from './fmp';
+import { clubAliases, isClubMatch } from '@/lib/clubTeams';
 import { parseSidgadDate } from '@/lib/matchDate';
 import type { ClubType, Field, MatchesResponse, Team } from '@/types';
-
-function normalize(name: string): string {
-  return name.replace(/\s+/g, ' ').trim().toUpperCase();
-}
-
-function clubAliases(name: string): string[] {
-  const upper = normalize(name);
-  const aliases = new Set<string>([upper]);
-  for (const suffix of [' A', ' B', ' C', ' D', ' E']) {
-    if (upper.endsWith(suffix)) {
-      aliases.add(upper.slice(0, -suffix.length));
-    }
-  }
-  return Array.from(aliases);
-}
-
-function isClubMatch(team: string | null, aliases: string[]): boolean {
-  if (!team) return false;
-  const upper = normalize(team);
-  return aliases.some((alias) => upper === alias || upper.startsWith(`${alias} `));
-}
 
 export async function getMatchesForClub(club: ClubType): Promise<MatchesResponse> {
   // The catalogue is composite-keyed (FMP-<code> / FGP-<code>) because sidgad
