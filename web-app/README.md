@@ -186,7 +186,9 @@ The store is implemented in `src/lib/server/sentStore.ts` and uses `@libsql/clie
 | Env var | Local dev | Vercel |
 | ------- | --------- | ------ |
 | `SENT_STORE_URL` | `file:./data/sent.sqlite` (default, lazy-created) | `libsql://<db>-<org>.turso.io` |
+| `SENT_STORE_TURSO_DATABASE_URL` | leave unset | Fallback for `SENT_STORE_URL` (legacy Vercel Turso integration name) |
 | `SENT_STORE_AUTH_TOKEN` | leave unset | Turso DB token |
+| `SENT_STORE_TURSO_AUTH_TOKEN` | leave unset | Fallback for `SENT_STORE_AUTH_TOKEN` (legacy Vercel Turso integration name) |
 
 Local dev writes to the gitignored `data/` directory. Production requires a Turso (or any libSQL-compatible remote) database.
 
@@ -209,15 +211,15 @@ Local dev writes to the gitignored `data/` directory. Production requires a Turs
 
 5. Add both values to the Vercel project:
 
-   - `SENT_STORE_URL` = the `libsql://…` URL
-   - `SENT_STORE_AUTH_TOKEN` = the generated token
+   - `SENT_STORE_URL` = the `libsql://…` URL (or use the Vercel Turso integration, which exposes `SENT_STORE_TURSO_DATABASE_URL` — both names are accepted)
+   - `SENT_STORE_AUTH_TOKEN` = the generated token (or `SENT_STORE_TURSO_AUTH_TOKEN` if you go through the Vercel Turso integration)
 
 6. Redeploy. The `match_send` table is created automatically on the first request (`CREATE TABLE IF NOT EXISTS`).
 
 ### Setting up local development
 
-No extra setup is required. The default config uses `file:./data/sent.sqlite`. If you want a different local path, set `SENT_STORE_URL` in `web-app/.env.local`, e.g. `SENT_STORE_URL=file:/tmp/sent.sqlite`.
+No extra setup is required. The default config uses `file:./data/sent.sqlite`. If you want a different local path, set `SENT_STORE_URL` in `web-app/.env.local`, e.g. `SENT_STORE_URL=file:/tmp/sent.sqlite` (or set the fallback `SENT_STORE_TURSO_DATABASE_URL` — same effect).
 
 ## Deploy
 
-This is a standard Next.js app, so any platform that supports Node 18+ works (Vercel, Render, Fly, a Docker container, …). On Vercel the project is detected as "Next.js" with no extra config. The production deployment needs the `SENT_STORE_URL` + `SENT_STORE_AUTH_TOKEN` environment variables configured as described above.
+This is a standard Next.js app, so any platform that supports Node 18+ works (Vercel, Render, Fly, a Docker container, …). On Vercel the project is detected as "Next.js" with no extra config. The production deployment needs the sent-store environment variables configured as described above (`SENT_STORE_URL` + `SENT_STORE_AUTH_TOKEN`, or the equivalent Turso integration names `SENT_STORE_TURSO_DATABASE_URL` + `SENT_STORE_TURSO_AUTH_TOKEN`).

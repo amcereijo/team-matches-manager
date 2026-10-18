@@ -7,8 +7,12 @@ import type { ClubType, Game } from '@/types';
 const COMPETITION_VALUES: CompetitionId[] = ['FMP', 'FGP'];
 
 function getClientConfig(): { url: string; authToken?: string } {
-  const url = process.env.SENT_STORE_URL ?? 'file:./data/sent.sqlite';
-  const authToken = process.env.SENT_STORE_AUTH_TOKEN;
+  const url =
+    process.env.SENT_STORE_URL ??
+    process.env.SENT_STORE_TURSO_DATABASE_URL ??
+    'file:./data/sent.sqlite';
+  const authToken =
+    process.env.SENT_STORE_AUTH_TOKEN ?? process.env.SENT_STORE_TURSO_AUTH_TOKEN;
   return { url, authToken };
 }
 
