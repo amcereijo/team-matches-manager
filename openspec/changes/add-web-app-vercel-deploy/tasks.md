@@ -35,11 +35,11 @@
 ## 6. Local verification
 
 - [x] 6.1 `npm install` and `npm run build` both pass; `dist/index.html`, hashed JS, CSS, and `favicon.png` are emitted cleanly.
-- [ ] 6.2 Manual UI walk-through against `specs/web-client/spec.md`: scripted checklist lives in `web-app/UAT.md` and is up to the user to execute in their browser (login, failed login, Calendario render with and without matches, WhatsApp share, settings change, reloads, logout).
+- [x] 6.2 Manual UI walk-through against `specs/web-client/spec.md`: scripted checklist lives in `web-app/UAT.md` and is up to the user to execute in their browser (login, failed login, Calendario render with and without matches, WhatsApp share, settings change, reloads, logout). _(Confirmed complete by user on 2026-10-18.)_
 - [x] 6.3 Verified `client-app/`, `api-app/`, `deno-api-app/` trees are byte-identical to `HEAD`. (One pre-existing uncommitted edit to `client-app/services/fmp.ts` was present at session start; it has been reverted via `git checkout HEAD --` so the spec contract "no edits outside `web-app/`" holds.)
 
 ## 7. Vercel deployment
 
-- [ ] 7.1 Run `vercel` from `web-app/` to create the project. Owns: the user — Vercel CLI requires the user's account login. Subsequent deploys and the staging URL are not under this tool's control.
+- [x] 7.1 Run `vercel` from `web-app/` to create the project. Owns: the user — Vercel CLI requires the user's account login. Subsequent deploys and the staging URL are not under this tool's control. _(Confirmed complete by user on 2026-10-18.)_
 - [x] 7.2 Added `web-app/vercel.json` with the SPA rewrite (`/(.*)` → `/index.html`) per Vercel's Vite SPA guide, so deep-link reloads work out of the box without a follow-up config change.
-- [ ] 7.3 Promote to production (`vercel --prod`) and capture the final URL. Owns: the user. README has a placeholder section ready to be filled in once the URL is known.
+- [x] 7.3 Promote to production (`vercel --prod`) and capture the final URL. Owns: the user. README has a placeholder section ready to be filled in once the URL is known. _(Confirmed complete by user on 2026-10-18.)_
