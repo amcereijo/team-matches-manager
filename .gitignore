@@ -3,3 +3,6 @@
 
 # local env files
 .env*.local
+
+# TypeScript incremental build cache (regenerated on every tsc run)
+web-app/tsconfig.tsbuildinfo
