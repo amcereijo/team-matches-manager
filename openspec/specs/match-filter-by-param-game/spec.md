@@ -2,7 +2,7 @@
 
 Defines how the web-app filters the matches returned by the sidgad upstream so that the Calendario and home page show the rows that actually involve the requested club, even when the upstream's cell text doesn't match the catalogue's club name exactly.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Match filtering uses `param_game` codes as the primary signal
 The web-app's match parser MUST extract `param_game[2]` and `param_game[3]` (the local and visit club codes) from each `tr.fila_agenda` row and surface them on the `Game` shape as `localCode` and `visitCode` (both `number | null`). When `getMatchesForClub(clubCode)` filters the parsed matches for a club, a row MUST be kept if `m.localCode === club.code` OR `m.visitCode === club.code`.
