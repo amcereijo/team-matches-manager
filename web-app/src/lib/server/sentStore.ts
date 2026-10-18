@@ -64,15 +64,22 @@ export function matchIsReady(match: Game): boolean {
 }
 
 function matchKeyIsReady(matchKey: string): boolean {
-  if (!matchKey.startsWith('tuple:')) {
-    // Game-id keys carry no date/time in the key; the UI only sends ready matches.
-    return true;
-  }
+  const parts = matchKey.split(':');
 
   // tuple:<competition>:<club_code>:<local>:<visit>:<date>:<time>
-  const parts = matchKey.split(':');
-  const date = parts[5];
-  const time = parts[6];
+  if (matchKey.startsWith('tuple:')) {
+    const date = parts[5];
+    const time = parts[6];
+    if (!date || !time) return false;
+    const trimmed = time.trim();
+    if (!trimmed) return false;
+    if (/^00:?00$/i.test(trimmed) || /^--:?--$/.test(trimmed)) return false;
+    return /\d/.test(trimmed);
+  }
+
+  // <competition>:<localCode>:<visitCode>:<date>:<time>
+  const date = parts[3];
+  const time = parts[4];
   if (!date || !time) return false;
   const trimmed = time.trim();
   if (!trimmed) return false;

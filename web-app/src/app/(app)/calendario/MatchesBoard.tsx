@@ -265,12 +265,13 @@ export function MatchesBoard({
                 </div>
               </div>
               <div className={styles.matchActions}>
-                {sentAt && matchKey ? (
+                {sentAt && matchKey && (
                   <span className={styles.sentBadge}>
                     <span aria-hidden>✓</span>
                     <span>Enviado · {formatSentDate(sentAt)}</span>
                   </span>
-                ) : isToday ? (
+                )}
+                {!ready ? null : isToday ? (
                   <span
                     className={styles.todayPill}
                     aria-label="Partido de hoy"

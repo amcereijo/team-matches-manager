@@ -18,13 +18,15 @@ function readParamGame(el: any): { gameId: number | null; localCode: number | nu
   const raw = (el as any).attribs?.['param_game'];
   if (typeof raw !== 'string') return { gameId: null, localCode: null, visitCode: null };
   const parts = raw.split('_');
-  // sidgad format: <...>_<...>_<localCode>_<visitCode>_<fixtureId>
-  // e.g. "2_15_415_438_4854003" → local 415, visit 438, fixture 4854003
+  // sidgad format: <modality>_<round>_<localCode>_<visitCode>_<competitionId>
+  // e.g. "2_7_412_406_4797" → local 412, visit 406, competition 4797
+  // There is no per-fixture id in the attribute, so we derive a stable key
+  // from (competitionId, localCode, visitCode, date, time) in the caller.
   const localCode = parts[2] !== undefined ? Number.parseInt(parts[2], 10) : NaN;
   const visitCode = parts[3] !== undefined ? Number.parseInt(parts[3], 10) : NaN;
-  const gameId = parts[4] !== undefined ? Number.parseInt(parts[4], 10) : NaN;
+  const competitionId = parts[4] !== undefined ? Number.parseInt(parts[4], 10) : NaN;
   return {
-    gameId: Number.isFinite(gameId) ? gameId : null,
+    gameId: Number.isFinite(competitionId) ? competitionId : null,
     localCode: Number.isFinite(localCode) ? localCode : null,
     visitCode: Number.isFinite(visitCode) ? visitCode : null,
   };
