@@ -5,7 +5,7 @@ import type { CompetitionId } from '@/constants/competitions';
 import type { Game } from '@/types';
 import { clubAliases, isClubMatch } from '@/lib/clubTeams';
 import { deriveMatchKey } from '@/lib/matchKey';
-import { parseSidgadDate } from '@/lib/matchDate';
+import { nowInMadrid, parseSidgadDate } from '@/lib/matchDate';
 import { getItem, setItem } from '@/services/storage';
 import styles from './calendario.module.css';
 
@@ -14,8 +14,12 @@ const TEAM_FILTER_KEY = 'calendario.teamFilter';
 
 const UNDATED_KEY = 'undated';
 
+// All Date accessors below read UTC fields. parseSidgadDate encodes Europe/
+// Madrid wall-clock components in the UTC slots of the Date it returns, so
+// using getUTC* (rather than get* / toLocaleDateString without timeZone)
+// makes the Calendario rendering independent of the host's local timezone.
 function isoWeekKey(d: Date): string {
-  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const date = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
   const dayNum = date.getUTCDay() || 7;
   date.setUTCDate(date.getUTCDate() + 4 - dayNum);
   const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
@@ -32,16 +36,21 @@ function isMatchToday(row: Game, today: Date): boolean {
   const d = parseSidgadDate(row.date, row.time);
   if (!d) return false;
   return (
-    d.getFullYear() === today.getFullYear() &&
-    d.getMonth() === today.getMonth() &&
-    d.getDate() === today.getDate()
+    d.getUTCFullYear() === today.getUTCFullYear() &&
+    d.getUTCMonth() === today.getUTCMonth() &&
+    d.getUTCDate() === today.getUTCDate()
   );
 }
 
 function formatMatchDate(date?: string | null, time?: string | null): string {
   const d = parseSidgadDate(date, time);
   if (!d) return '';
+  // parseSidgadDate encodes Europe/Madrid wall-clock components in the Date's
+  // UTC slots. Formatting with timeZone 'UTC' reads from those slots without
+  // touching the host's local timezone, so the output matches Madrid time
+  // regardless of where this code runs (Vercel UTC, dev Mac Madrid, etc.).
   return d.toLocaleDateString('es-ES', {
+    timeZone: 'UTC',
     weekday: 'long',
     hour: '2-digit',
     minute: '2-digit',
@@ -54,7 +63,12 @@ function formatDayLabel(date?: string | null): string {
   const d = parseSidgadDate(date, null);
   if (!d) return '';
   return d
-    .toLocaleDateString('es-ES', { weekday: 'long', day: '2-digit', month: 'short' })
+    .toLocaleDateString('es-ES', {
+      timeZone: 'UTC',
+      weekday: 'long',
+      day: '2-digit',
+      month: 'short',
+    })
     .replace('.', '');
 }
 
@@ -146,9 +160,11 @@ export function MatchesBoard({
   }, [matches, activeSelection]);
 
   useEffect(() => {
-    setToday(new Date());
+    // Use nowInMadrid so "today" matches the encoding of match dates
+    // (Europe/Madrid components in UTC slots — see matchDate.ts).
+    setToday(nowInMadrid());
     function refresh() {
-      setToday(new Date());
+      setToday(nowInMadrid());
     }
     document.addEventListener('visibilitychange', refresh);
     return () => document.removeEventListener('visibilitychange', refresh);

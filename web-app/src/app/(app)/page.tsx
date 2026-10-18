@@ -7,7 +7,11 @@ import styles from './main.module.css';
 
 function formatLong(d: Date | null): string {
   if (!d) return '';
+  // parseSidgadDate encodes Europe/Madrid wall-clock components in the Date's
+  // UTC slots, so we format with timeZone 'UTC' to read from those slots
+  // directly (host-TZ independent).
   return d.toLocaleDateString('es-ES', {
+    timeZone: 'UTC',
     weekday: 'long',
     day: '2-digit',
     month: 'long',

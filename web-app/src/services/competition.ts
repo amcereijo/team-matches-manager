@@ -1,7 +1,7 @@
 import { fetchFgpMatches } from './fgp';
 import { fetchFmpMatches } from './fmp';
 import { clubAliases, isClubMatch } from '@/lib/clubTeams';
-import { parseSidgadDate } from '@/lib/matchDate';
+import { nowInMadrid, parseSidgadDate } from '@/lib/matchDate';
 import type { ClubType, Field, MatchesResponse, Team } from '@/types';
 
 export async function getMatchesForClub(club: ClubType): Promise<MatchesResponse> {
@@ -26,8 +26,10 @@ export async function getMatchesForClub(club: ClubType): Promise<MatchesResponse
   // Drop matches that have already happened. sidgad keeps played fixtures in
   // its agenda; the UI should only surface upcoming ones. Matches without a
   // parseable date/time (pending fixtures) are kept so the user still sees the
-  // "Pendiente" badge until the federation confirms a time.
-  const now = Date.now();
+  // "Pendiente" badge until the federation confirms a time. Both sides of
+  // the comparison use the Europe/Madrid wall clock (see matchDate.ts) so
+  // that the filter behaves identically on Vercel (UTC) and locally.
+  const now = nowInMadrid().getTime();
   const upcoming = filtered.filter((m) => {
     const kickoff = parseSidgadDate(m.date, m.time);
     if (!kickoff) return true;
