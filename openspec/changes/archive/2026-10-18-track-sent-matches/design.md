@@ -1,6 +1,6 @@
 ## Context
 
-The web-app (`web-app/`) is a Next.js 14 App Router app that fetches sidgad upstream HTML server-side, parses it into a `Game[]` per club, and renders the Calendario. The current `Game` shape (in `src/types/index.ts`) has no stable per-match id — `localCode`/`visitCode` exist but two clubs can play multiple times in a season, so they don't disambiguate. The upstream `param_game` attribute carries `..._<localCode>_<visitCode>_<fixtureId>` (five underscore-separated segments) and is partially parsed in `fmp.ts` and `fgp.ts` to extract `localCode`/`visitCode`; the fixture-id segment is discarded.
+The web-app (`web-app/`) is a Next.js 14 App Router app that fetches sidgad upstream HTML server-side, parses it into a `Game[]` per club, and renders the Calendario. The current `Game` shape (in `src/types/index.ts`) has no stable per-match id — `localCode`/`visitCode` exist but two clubs can play multiple times in a season, so they don't disambiguate. The upstream `param_game` attribute carries `<modality>_<round>_<localCode>_<visitCode>_<competitionId>` (five underscore-separated segments) and is partially parsed in `fmp.ts` and `fgp.ts` to extract `localCode`/`visitCode`; the competition-id segment is discarded.
 
 The Calendario's `MatchesBoard.tsx` renders an "Enviar" link per row that opens `wa.me/?text=...` in a new tab. Today there is no server-side record of which matches have been shared.
 
@@ -49,16 +49,16 @@ See `proposal.md` for motivation, `specs/match-send-tracking/spec.md` for the be
 - *`@tursodatabase/serverless`:* considered, but `@libsql/client` is more familiar in the ecosystem and supports the same remote Turso URL with the same `fetch`-based transport when the URL is `https://` or `libsql://`.
 
 The store connects lazily on first use. Environment variables:
-- `SENT_STORE_URL` — database URL. Defaults to `file:./data/sent.sqlite` for local dev. In production set it to the Turso database URL (e.g. `libsql://my-db-org.turso.io`).
-- `SENT_STORE_AUTH_TOKEN` — Turso auth token. Required for remote URLs; ignored for local `file:` URLs.
+- `SENT_STORE_URL` — database URL. Defaults to `file:./data/sent.sqlite` for local dev. In production set it to the Turso database URL (e.g. `libsql://my-db-org.turso.io`). If unset, falls back to `SENT_STORE_TURSO_DATABASE_URL` (the variable name Vercel's Turso integration populates by default).
+- `SENT_STORE_AUTH_TOKEN` — Turso auth token. Required for remote URLs; ignored for local `file:` URLs. If unset, falls back to `SENT_STORE_TURSO_AUTH_TOKEN`.
 
 The route module initialises the table on open with `CREATE TABLE IF NOT EXISTS …`.
 
-### D3 — Match identity: `param_game` fixture id + tuple fallback
+### D3 — Match identity: composite key from `param_game` codes + date/time
 
-**Choice:** Surface `param_game` fifth segment (the fixture id) as `gameId: number | null` on `Game`. Derive `matchKey = "<competition>:<gameId>"` when `gameId` is non-null, else `matchKey = "tuple:<competition>:<club_code>:<local>:<visit>:<date>:<time>"`.
+**Choice:** The upstream `param_game` attribute's last segment is the competition id, not a unique fixture id. Derive `matchKey = "<competition>:<localCode>:<visitCode>:<date>:<time>"` when `localCode` or `visitCode` is non-null, else fall back to `matchKey = "tuple:<competition>:<club_code>:<local>:<visit>:<date>:<time>"`.
 
-**Why:** The fifth segment is sidgad's own unique fixture id (e.g. `4854003` in `param_game="2_15_415_438_4854003"`). It survives date/time corrections by the federation and is unique per match. The fallback covers the existing "defensive parsing" case already accepted by `match-filter-by-param-game` spec. Namespacing by `competition` keeps FMP and FGP id spaces separate (sidgad's id sequences are independent per federation).
+**Why:** Real sidgad data has only 41 distinct last-segment values across 1,689 FMP rows, so it cannot be a fixture id. The combination of (competition, local club code, visit club code, date, time) is unique per fixture in the rendered Calendario and survives date/time corrections better than team-name text. The fallback covers rows without `param_game`. Namespacing by `competition` keeps FMP and FGP id spaces separate.
 
 **Alternatives considered:**
 - *Pure composite tuple key on every match:* rejected — brittleness on time corrections means a marked match could "disappear" from the sent set after the federation updates the kickoff time.
@@ -98,9 +98,9 @@ The `matchKey` is computed server-side in the Calendario page (right where match
 **Choice:** Sent ready rows get:
 - `border-left: 3px solid #16a34a` (existing `--accent` family — or a new `--sent-accent` token; we will reuse existing tokens where possible)
 - opacity `0.7` on `.matchTeams` and `.matchLeague`, faded text in `.matchMeta`
-- Enviar `<a>` replaced with `<span class="sentBadge">✓ Enviado · <date></span>`
+- a non-interactive `<span class="sentBadge">✓ Enviado · <date></span>` pill next to the still-visible "Enviar" button
 
-**Why:** Matches the existing visual language (`.notReady`, `.zebra`, `.todayPill`) and reuses the same colour families. Pill is non-interactive — there is no undo — so it must not look like a button.
+**Why:** Matches the existing visual language (`.notReady`, `.zebra`, `.todayPill`) and reuses the same colour families. Keeping the Enviar button lets users re-share a match; the pill only signals that it has been marked sent before.
 
 **Alternatives considered:**
 - *Strikethrough on team names:* rejected — too aggressive; the user may want to re-read the date/time of a sent match.
@@ -117,7 +117,7 @@ The `matchKey` is computed server-side in the Calendario page (right where match
 - **Turso database must be provisioned before production deploy** → Document the setup steps; the app will fail to connect on first request if `SENT_STORE_URL` + `SENT_STORE_AUTH_TOKEN` are missing in production.
 - **Local dev data loss if the SQLite file is wiped** → Document `SENT_STORE_URL` / `SENT_STORE_AUTH_TOKEN` in `.env.local.example`; the default local path (`file:./data/sent.sqlite`) writes to the gitignored `data/` directory.
 - **Concurrent writes from two tabs of the same club** → libSQL/Turso serialises writes on the primary; the `INSERT OR IGNORE` + follow-up SELECT is correct under contention because `sent_at` is read after the insert returns.
-- **Match id drift if sidgad changes its `param_game` schema** → The tuple fallback covers the missing-id case; if sidgad changes the segment order, our `parts[4]` would silently change meaning. Mitigation: a startup-time sanity log of the first parsed `param_game` value (one line at boot) so a regression is visible.
+- **Match id drift if sidgad changes its `param_game` schema** → The tuple fallback covers the missing/malformed case; if sidgad changes the segment order, our `localCode`/`visitCode` parsing would silently shift. Mitigation: a startup-time sanity log of the first parsed `param_game` value (one line at boot) so a regression is visible.
 - **Optimistic semantics mislead users** → The info-panel sentence makes the model explicit; spec requires it (`Requirement: Optimistic semantics are documented in the UI`).
 - **`gameId` collision if sidgad ever shares an id across FMP/FGP** → Mitigated by namespacing `matchKey` with the competition prefix (`FMP:99` vs `FGP:99`); the spec mandates this in `Requirement: A stable match key is derived for each match`.
 - **Remote libSQL latency on the Calendario server render** → The sent set read is a single indexed `SELECT`; Turso is low-latency, but if it becomes a bottleneck the page could fallback to passing an empty set and hydrating client-side. This would trade the no-flash guarantee for resilience, which is not required in v1.

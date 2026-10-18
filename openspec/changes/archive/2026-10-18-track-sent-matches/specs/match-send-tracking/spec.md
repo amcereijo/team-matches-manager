@@ -4,26 +4,26 @@ Records when a club marks one of its upcoming matches as already shared with the
 
 ## ADDED Requirements
 
-### Requirement: Match identity uses the upstream sidgad game id when available
-The web-app's match parsers in `src/services/fmp.ts` and `src/services/fgp.ts` MUST extract the fifth underscore-separated segment of each row's `param_game` attribute (the sidgad fixture id) and surface it on the `Game` shape as `gameId: number | null`. The parsers MUST also continue to extract `param_game[2]` and `param_game[3]` as `localCode` and `visitCode`. When `param_game` is missing or malformed (fewer than five underscore-separated parts), `gameId` MUST be `null`. The parsers MUST NOT throw.
+### Requirement: Match identity uses the upstream sidgad codes + date/time
+The web-app's match parsers in `src/services/fmp.ts` and `src/services/fgp.ts` MUST extract `param_game[2]` and `param_game[3]` as `localCode` and `visitCode`, and `param_game[4]` as `gameId` (the sidgad competition id). When `param_game` is missing or malformed (fewer than five underscore-separated parts), all three MUST be `null`. The parsers MUST NOT throw.
 
 #### Scenario: FGP row with a well-formed `param_game`
 - **WHEN** a `tr.fila_agenda` element has `param_game="2_15_438_411_4853980"`
-- **THEN** the parsed `Game` has `gameId: 4853980` in addition to `localCode: 438` and `visitCode: 411`
+- **THEN** the parsed `Game` has `localCode: 438`, `visitCode: 411`, and `gameId: 4853980`
 
 #### Scenario: Row with a missing `param_game` attribute
 - **WHEN** a `tr.fila_agenda` element has no `param_game` attribute
-- **THEN** the parsed `Game` has `gameId: null` and the parser does not throw; the row is still included in the response
+- **THEN** the parsed `Game` has `localCode: null`, `visitCode: null`, `gameId: null`, and the parser does not throw; the row is still included in the response
 
 ### Requirement: A stable match key is derived for each match
-The web-app MUST compute a stable string `matchKey` for every match before it reaches the Calendario UI. When `gameId` is non-null, `matchKey` MUST be `"<competition>:<gameId>"` where `<competition>` is the logged-in club's competition id (`FMP` or `FGP`). When `gameId` is null, `matchKey` MUST be a tuple-shaped string `"tuple:<competition>:<club_code>:<local>:<visit>:<date>:<time>"` whose components are the existing `Game` fields uppercased, trimmed, and joined with a single colon separator.
+The web-app MUST compute a stable string `matchKey` for every match before it reaches the Calendario UI. When `localCode` or `visitCode` is non-null, `matchKey` MUST be `"<competition>:<localCode>:<visitCode>:<date>:<time>"`. When both codes are null, `matchKey` MUST be a tuple-shaped fallback `"tuple:<competition>:<club_code>:<local>:<visit>:<date>:<time>"` whose text components are the existing `Game` fields uppercased, trimmed, and joined with a single colon separator.
 
-#### Scenario: Match with upstream id
-- **WHEN** a match for FGP club 438 has `gameId: 4853980`
-- **THEN** the match's `matchKey` is the string `"FGP:4853980"`
+#### Scenario: Match with upstream codes
+- **WHEN** a match for FGP club 438 has `localCode: 438`, `visitCode: 411`, `date: "18/10/2026"`, `time: "18:30"`
+- **THEN** the match's `matchKey` is the string `"FGP:438:411:18/10/2026:18:30"`
 
-#### Scenario: Match without upstream id
-- **WHEN** a match for FGP club 438 has `gameId: null`, `local: "HL NOROESTE"`, `visit: "RIVAL"`, `date: "18/10/2026"`, `time: "18:30"`
+#### Scenario: Match without upstream codes
+- **WHEN** a match for FGP club 438 has `localCode: null`, `visitCode: null`, `local: "HL NOROESTE"`, `visit: "RIVAL"`, `date: "18/10/2026"`, `time: "18:30"`
 - **THEN** the match's `matchKey` is `"tuple:FGP:438:HL NOROESTE:RIVAL:18/10/2026:18:30"`
 
 #### Scenario: Same match renders with the same key on a re-fetch
@@ -44,19 +44,19 @@ The system MUST only accept a "mark sent" request for a match that has both a `d
 ### Requirement: Sent matches are persisted server-side per club
 The web-app MUST persist sent matches in a server-side store keyed by `(club_code, competition, match_key)`. The store MUST be isolated per club: a club MUST NOT be able to read or write another club's sent set. The system MUST record, at minimum, the `sent_at` timestamp in ISO 8601 UTC format.
 
-The production store MUST be a remote libSQL database reachable via `SENT_STORE_URL` and authenticated with `SENT_STORE_AUTH_TOKEN`. Local development MAY use a local SQLite file (`file:./data/sent.sqlite`) when `SENT_STORE_URL` is unset.
+The production store MUST be a remote libSQL database reachable via `SENT_STORE_URL` and authenticated with `SENT_STORE_AUTH_TOKEN`. The web-app MUST also accept the legacy Turso-integration names `SENT_STORE_TURSO_DATABASE_URL` (as a fallback for `SENT_STORE_URL`) and `SENT_STORE_TURSO_AUTH_TOKEN` (as a fallback for `SENT_STORE_AUTH_TOKEN`), so deployments that wire up Vercel's Turso integration without renaming the variables keep working. Local development MAY use a local SQLite file (`file:./data/sent.sqlite`) when neither `SENT_STORE_URL` nor `SENT_STORE_TURSO_DATABASE_URL` is set.
 
 #### Scenario: First mark
-- **WHEN** club 438 (FMP) sends a successful POST for `matchKey: "FMP:4853980"`
-- **THEN** the store contains one row with `club_code: 438`, `competition: "FMP"`, `match_key: "FMP:4853980"`, `sent_at: <current ISO timestamp>`; a subsequent GET returns `{ sent: { "FMP:4853980": "<that same timestamp>" } }`
+- **WHEN** club 438 (FMP) sends a successful POST for `matchKey: "FMP:438:411:18/10/2026:18:30"`
+- **THEN** the store contains one row with `club_code: 438`, `competition: "FMP"`, `match_key: "FMP:438:411:18/10/2026:18:30"`, `sent_at: <current ISO timestamp>`; a subsequent GET returns `{ sent: { "FMP:438:411:18/10/2026:18:30": "<that same timestamp>" } }`
 
 #### Scenario: Second mark of the same match is idempotent
-- **WHEN** the same club sends a second POST for `matchKey: "FMP:4853980"` within the same minute
+- **WHEN** the same club sends a second POST for `matchKey: "FMP:438:411:18/10/2026:18:30"` within the same minute
 - **THEN** the store still contains exactly one row for that `(club, match_key)` and `sent_at` is the timestamp from the first mark; the second POST responds with HTTP 200 and that original `sent_at`
 
 #### Scenario: Different clubs do not see each other's marks
-- **WHEN** club 438 has marked `matchKey: "FMP:4853980"` and club 411 requests its own sent set
-- **THEN** the response for club 411 does not contain `"FMP:4853980"`
+- **WHEN** club 438 has marked `matchKey: "FMP:438:411:18/10/2026:18:30"` and club 411 requests its own sent set
+- **THEN** the response for club 411 does not contain `"FMP:438:411:18/10/2026:18:30"`
 
 #### Scenario: Unauthenticated request
 - **WHEN** a request to `/api/matches/sent` arrives with no iron-session club
@@ -75,15 +75,16 @@ When the user clicks the "Enviar" button on a ready match row in `MatchesBoard`,
 
 ### Requirement: Sent matches render distinctly in the Calendario
 For a ready match whose `matchKey` is in the current club's sent set, the Calendario row MUST render with:
-- the "Enviar" button replaced by a non-interactive "✓ Enviado" pill that includes the localized sent-at date (e.g. `✓ Enviado · 14 oct`);
+- a non-interactive "✓ Enviado" pill that includes the localized sent-at date (e.g. `✓ Enviado · 14 oct`);
 - a faded visual treatment (reduced text contrast) so the row reads as "already handled";
-- an accent border (green) that distinguishes the row from unsent and pending rows.
+- an accent border (green) that distinguishes the row from unsent and pending rows;
+- the "Enviar" button remains available so the user can re-share the match.
 
 When the match is ready but NOT yet marked sent, the row MUST render exactly as today: the "Enviar" button is shown and no sent styling applies.
 
 #### Scenario: Ready and sent
 - **WHEN** the Calendario renders a match that is `isMatchReady()` and is in the sent set
-- **THEN** the row shows a green accent border, faded text, and a `✓ Enviado · <date>` pill in place of the Enviar button
+- **THEN** the row shows a green accent border, faded text, a `✓ Enviado · <date>` pill, AND the "Enviar" button is still present
 
 #### Scenario: Ready and not sent
 - **WHEN** the Calendario renders a match that is `isMatchReady()` and is NOT in the sent set
