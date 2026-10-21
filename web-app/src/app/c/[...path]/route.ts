@@ -111,10 +111,32 @@ a.add:hover{background:var(--accent-hover)}
 const NOT_READY_HTML = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>No disponible</title></head><body style="font-family:sans-serif;padding:24px"><h1>No se pudo abrir el partido</h1><p>Es posible que la fecha y la hora todavía no estén confirmadas por la federación. Inténtalo de nuevo cuando se publiquen.</p></body></html>`;
 
 export async function GET(
-  _request: Request,
+  request: Request,
   ctx: { params: { path?: string[] } },
 ): Promise<Response> {
   const event = parseEventPath(ctx.params.path ?? []);
+
+  // Opt-in diagnostic for "the link 400s but the fixture is fine". Answers
+  // *how* the segments arrived (encoded once, twice, or split on the date's
+  // slashes) without ever revealing who asked — the segments are fixture
+  // data the organiser already owns, and nothing about the requester (IP,
+  // user agent, session) is read or logged. Remove once the cause is settled.
+  if (new URL(request.url).searchParams.has('debug')) {
+    return new Response(
+      `<!doctype html><meta charset="utf-8"><title>debug</title><pre>${escapeHtml(
+        JSON.stringify(
+          {
+            segments: ctx.params.path ?? [],
+            segmentCount: (ctx.params.path ?? []).length,
+            parsed: event,
+          },
+          null,
+          2,
+        ),
+      )}</pre>`,
+      { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } },
+    );
+  }
 
   if (!event) {
     return new Response(NOT_READY_HTML, {

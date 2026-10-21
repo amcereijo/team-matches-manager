@@ -84,26 +84,98 @@ export function buildCalendarUrl(
 }
 
 /**
- * Parse the `<when>/<title>/<location>` path segments produced by
- * `buildCalendarUrl`. `segments` arrive already URL-decoded from Next.js.
- * Returns null when the shape is wrong or the kickoff is not ready.
+ * Percent-decode as many layers as are present, stopping as soon as the value
+ * stops changing.
+ *
+ * How many layers a catch-all param arrives with is NOT ours to control:
+ * Next.js decodes `params.path` once, but a link that has been through
+ * WhatsApp (or any other client that re-encodes `%` as `%25`) arrives with an
+ * extra layer, and a future runtime/edge change can alter it again. Decoding
+ * once and assuming the result is clean is what made this page start 400ing
+ * with a perfectly good link.
+ *
+ * A malformed escape (`100% CP`, a bare `%`) throws; that is not an error
+ * here, it just means the value is not percent-encoded at this layer. Keep
+ * what we have and stop rather than failing the whole request.
  */
+function decodeFully(value: string): string {
+  let out = value;
+  for (let i = 0; i < 3; i++) {
+    let next: string;
+    try {
+      next = decodeURIComponent(out);
+    } catch {
+      break;
+    }
+    if (next === out) break;
+    out = next;
+  }
+  return out;
+}
+
+/**
+ * Parse the `<when>/<title>/<location>` path segments produced by
+ * `buildCalendarUrl`. Returns null when the shape is wrong or the kickoff is
+ * not ready.
+ *
+ * Two things about the incoming path are not ours to control, and both used to
+ * turn a perfectly good link into "no se pudo abrir el partido":
+ *
+ * 1. How many times it has been percent-decoded. Next.js decodes
+ *    `params.path` once; a link relayed through WhatsApp can carry an extra
+ *    layer. `decodeFully` above removes whatever is there.
+ * 2. Whether `%2F` is treated as a separator. Normally the kickoff arrives as
+ *    one segment (`24/10/2026-17:00`), but a runtime that decodes before
+ *    splitting hands us `24`, `10`, `2026-17:00` as three — which shifts every
+ *    later segment along, so the "title" is read as `2026-17:00` and the parse
+ *    dies. We therefore try joining leading segments, but only accept a join
+ *    that is *exactly* a kickoff (see `KICKOFF_RE`), so a valid-looking join
+ *    can never swallow the title or let `00:00` masquerade as a real time.
+ */
+const KICKOFF_RE = /^\d{1,2}\/\d{1,2}\/\d{4}-\d{1,2}:\d{2}$/;
+
 export function parseEventPath(segments: string[]): MatchEvent | null {
-  const parts = segments.filter((s) => s.length > 0);
-  if (parts.length < 3) return null;
+  const parts = segments.filter((s) => s.length > 0).map(decodeFully);
 
-  const whenRaw = safeDecode(parts[0]);
-  if (whenRaw === null) return null;
-  const hyphenIdx = whenRaw.indexOf('-');
-  if (hyphenIdx < 0) return null;
+  // Need at least the when-segment and a title; the venue may legitimately be
+  // absent, so do not require a third segment up front.
+  if (parts.length < 2) return null;
 
-  const date = whenRaw.slice(0, hyphenIdx);
-  const time = whenRaw.slice(hyphenIdx + 1);
-  const title = parts[1];
-  if (!title) return null;
-  if (!parseKickoff(date, time)) return null;
+  // `consumed` = how many leading segments make up the kickoff. Normally 1;
+  // more only if the runtime split the date on its encoded slashes.
+  //
+  // The loop below runs `consumed` from 1 upwards and returns on the first
+  // match, so the *simplest* reading always wins: a title that happens to look
+  // like a date fragment can never steal a segment from the real kickoff. A
+  // genuinely split date has no valid single-segment reading, so it falls
+  // through to the 2- and 3-segment joins.
+  for (let consumed = 1; consumed <= parts.length - 1; consumed++) {
+    const whenRaw = parts.slice(0, consumed).join('/');
+    if (!KICKOFF_RE.test(whenRaw)) continue;
 
-  return { title, date, time, location: parts[2] ?? '' };
+    const hyphenIdx = whenRaw.indexOf('-');
+    const date = whenRaw.slice(0, hyphenIdx);
+    const time = whenRaw.slice(hyphenIdx + 1);
+    // Exact-shape match is not enough on its own: `00:00` and `--:--` are
+    // sidgad's "time not published" sentinels and must stay rejected.
+    if (!parseKickoff(date, time)) continue;
+
+    const rest = parts.slice(consumed);
+    const title = rest[0];
+    if (!title) return null;
+
+    // A venue containing "https://goo.gl/..." can also arrive split on its
+    // slashes. Rejoin it so `splitVenue` sees "Name (url)" whole again;
+    // `https:/` loses a slash that was eaten as a separator.
+    const location = rest
+      .slice(1)
+      .join('/')
+      .replace(/https:\/(?!\/)/g, 'https://');
+
+    return { title, date, time, location };
+  }
+
+  return null;
 }
 
 /**
@@ -267,12 +339,4 @@ function madridKickoffAsUtc(date: string, time: string): Date | null {
   const offsetMs = guessAsMadridWallClock - guess.getTime();
 
   return new Date(guess.getTime() - offsetMs);
-}
-
-function safeDecode(value: string): string | null {
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return null;
-  }
 }
