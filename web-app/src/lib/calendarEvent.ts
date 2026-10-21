@@ -1,0 +1,278 @@
+import type { Game } from '@/types';
+import { clubAliases, isClubMatch } from '@/lib/clubTeams';
+import { parseSidgadDate } from '@/lib/matchDate';
+
+export const MADRID_TZ_ID = 'Europe/Madrid';
+export const MATCH_DURATION_MINUTES = 90;
+
+/**
+ * Path prefix for the calendar landing page. The WhatsApp link points here,
+ * not at Google Calendar directly, because a long query-string URL gets
+ * visually broken by WhatsApp's `&`-wrap and the recipient has to reach a
+ * `calendar.google.com` link from a real page for the OS/app routing to
+ * behave.
+ */
+export const CALENDAR_PATH_PREFIX = '/c';
+
+// Sidgad's "kickoff not published yet" sentinels.
+const TIME_SENTINELS = [/^00:?00$/i, /^--:?--$/];
+
+export type KickoffParts = {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+};
+
+export type MatchEvent = {
+  title: string;
+  date: string;
+  time: string;
+  location: string;
+};
+
+/** Match is ready iff it has a date AND a non-sentinel time. */
+export function isMatchReady(game: Game): boolean {
+  if (!game.date) return false;
+  if (!game.time) return false;
+  const trimmed = game.time.trim();
+  if (!trimmed) return false;
+  if (TIME_SENTINELS.some((re) => re.test(trimmed))) return false;
+  return /\d/.test(trimmed);
+}
+
+/** The team that is NOT one of the user's clubs. */
+export function opponentFor(game: Game, clubName: string): string {
+  const aliases = clubAliases(clubName);
+  const localIsUs = isClubMatch(game.local, aliases);
+  const visitIsUs = isClubMatch(game.visit, aliases);
+  if (localIsUs && !visitIsUs) return (game.visit ?? '').trim();
+  if (visitIsUs && !localIsUs) return (game.local ?? '').trim();
+  return (game.visit ?? '').trim();
+}
+
+/** Venue text, with the map URL appended in parentheses when present. */
+export function locationText(game: Game): string {
+  if (!game.location) return '';
+  return game.map ? `${game.location} (${game.map})` : game.location;
+}
+
+/**
+ * Build the landing-page URL that goes into the WhatsApp message.
+ * Returns null for a not-ready match so the caller omits the line.
+ */
+export function buildCalendarUrl(
+  game: Game,
+  clubName: string,
+  baseUrl: string,
+): string | null {
+  if (!isMatchReady(game)) return null;
+
+  const opponent = opponentFor(game, clubName);
+  const title = opponent
+    ? `Game with ${opponent}`
+    : `${game.local ?? ''} - ${game.visit ?? ''}`.trim();
+
+  const segments = [
+    `${game.date ?? ''}-${game.time ?? ''}`,
+    title,
+    locationText(game),
+  ].map((s) => encodeURIComponent(s));
+
+  return `${baseUrl.replace(/\/$/, '')}${CALENDAR_PATH_PREFIX}/${segments.join('/')}`;
+}
+
+/**
+ * Parse the `<when>/<title>/<location>` path segments produced by
+ * `buildCalendarUrl`. `segments` arrive already URL-decoded from Next.js.
+ * Returns null when the shape is wrong or the kickoff is not ready.
+ */
+export function parseEventPath(segments: string[]): MatchEvent | null {
+  const parts = segments.filter((s) => s.length > 0);
+  if (parts.length < 3) return null;
+
+  const whenRaw = safeDecode(parts[0]);
+  if (whenRaw === null) return null;
+  const hyphenIdx = whenRaw.indexOf('-');
+  if (hyphenIdx < 0) return null;
+
+  const date = whenRaw.slice(0, hyphenIdx);
+  const time = whenRaw.slice(hyphenIdx + 1);
+  const title = parts[1];
+  if (!title) return null;
+  if (!parseKickoff(date, time)) return null;
+
+  return { title, date, time, location: parts[2] ?? '' };
+}
+
+/**
+ * Validate `date` is dd/mm/yyyy and `time` is hh:mm and not a sentinel.
+ * Returns the wall-clock components on success, null on failure.
+ *
+ * Uses `parseSidgadDate` for shape validation but deliberately reads the
+ * components out of its UTC slots — that helper stores Madrid wall-clock
+ * numbers there by design.
+ */
+export function parseKickoff(
+  date: string | null,
+  time: string | null,
+): KickoffParts | null {
+  if (!date) return null;
+  if (!time) return null;
+  const trimmed = time.trim();
+  if (!trimmed || TIME_SENTINELS.some((re) => re.test(trimmed))) return null;
+  if (!/\d/.test(trimmed)) return null;
+
+  const d = parseSidgadDate(date, time);
+  if (!d) return null;
+  return {
+    year: d.getUTCFullYear(),
+    month: d.getUTCMonth() + 1,
+    day: d.getUTCDate(),
+    hour: d.getUTCHours(),
+    minute: d.getUTCMinutes(),
+  };
+}
+
+/** Spanish human-readable date + time, e.g. "sábado, 24 de octubre, 17:00". */
+export function formatSpanishKickoff(date: string, time: string): string {
+  const parts = parseKickoff(date, time);
+  if (!parts) return `${date} ${time}`;
+  // Date.UTC gives us a stable base for toLocaleDateString with
+  // timeZone 'UTC' — the wall-clock components live in the UTC slots, so
+  // formatting with 'UTC' reads them back verbatim.
+  const d = new Date(
+    Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute),
+  );
+  const formatted = d.toLocaleDateString('es-ES', {
+    timeZone: 'UTC',
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+  });
+  return `${formatted}, ${time}`;
+}
+
+/**
+ * Build a Google Calendar "add event" URL.
+ *
+ * Shape is pinned to a link confirmed working by hand:
+ *
+ *   https://calendar.google.com/calendar/render
+ *     ?action=TEMPLATE
+ *     &text=<title>
+ *     &dates=<start>/<end>      (real UTC instants, Z on BOTH halves)
+ *     &ctz=Europe/Madrid
+ *     &details=<fixed note>
+ *     &location=<venue, optional>
+ *
+ * Notes on the parts that look redundant:
+ *
+ * - `/calendar/render` (no `r/`). Google's docs also advertise
+ *   `/calendar/r/eventedit`, but the Google Calendar **Android app**
+ *   registers no App Link handler for `eventedit` and drops the query
+ *   string — the Calendar app opens on the day view with nothing to save.
+ *   `/calendar/render` is the form that reaches the editor on Android.
+ * - `dates` uses real UTC instants with `Z` on both halves, NOT the Madrid
+ *   wall clock. Passing wall-clock digits alongside `ctz` makes the editor
+ *   open empty.
+ * - `ctz=Europe/Madrid` is kept even though `dates` is UTC. It does not
+ *   shift the instant (the `Z` already fixes it) — it tells Google which
+ *   zone the event conceptually belongs to, which is what makes a Spanish
+ *   fixture display at the intended hour.
+ *
+ * Do not "simplify" this: every one of these details was arrived at by
+ * breaking it on a real device.
+ */
+export function buildGoogleCalendarUrl(event: MatchEvent): string | null {
+  const kickoff = madridKickoffAsUtc(event.date, event.time);
+  if (!kickoff) return null;
+  const end = new Date(kickoff.getTime() + MATCH_DURATION_MINUTES * 60 * 1000);
+
+  const params: Record<string, string> = {
+    action: 'TEMPLATE',
+    text: event.title,
+    dates: `${formatUtcStamp(kickoff)}/${formatUtcStamp(end)}`,
+    ctz: MADRID_TZ_ID,
+    details: 'Convocatoria enviada por WhatsApp',
+  };
+  if (event.location) params.location = event.location;
+
+  const search = Object.entries(params)
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+    .join('&');
+
+  return `https://calendar.google.com/calendar/render?${search}`;
+}
+
+/** `YYYYMMDDTHHMMSSZ` from a real-UTC Date. Both halves of `dates` need it. */
+function formatUtcStamp(d: Date): string {
+  return d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+}
+
+/**
+ * Real UTC `Date` for a kickoff expressed in Europe/Madrid wall-clock terms
+ * (sidgad format: `date` = "dd/mm/yyyy", `time` = "hh:mm"). Returns `null` on
+ * malformed input — same nullability contract as `parseSidgadDate`.
+ *
+ * Unlike `parseSidgadDate`, this does NOT use the "UTC slots hold Madrid
+ * components" trick. The returned Date is a real UTC instant, so
+ * `toISOString()` emits a correct absolute moment. `parseSidgadDate`'s
+ * output MUST NOT be used here: its UTC slots hold Madrid numbers, so
+ * `toISOString()` would emit the wall clock as if it were UTC and land the
+ * event one or two hours off depending on the season.
+ *
+ * DST-safe: 18:30 Madrid on 15/02 (CET, UTC+1) and on 18/10 (CEST, UTC+2)
+ * resolve to different real instants, which is what an absolute-time
+ * consumer needs.
+ */
+function madridKickoffAsUtc(date: string, time: string): Date | null {
+  const [day, month, year] = date.split('/');
+  if (!day || !month || !year) return null;
+  const [hh = '00', mm = '00'] = time.split(':');
+  const y = Number.parseInt(year, 10);
+  const mo = Number.parseInt(month, 10);
+  const d = Number.parseInt(day, 10);
+  const h = Number.parseInt(hh, 10);
+  const mi = Number.parseInt(mm, 10);
+  if ([y, mo, d, h, mi].some((n) => !Number.isFinite(n))) return null;
+
+  // Treat the components as if they were UTC; that instant is offset from
+  // the real kickoff by the Madrid UTC offset in force at that moment.
+  const guess = new Date(Date.UTC(y, mo - 1, d, h, mi));
+
+  // Read back the wall clock `guess` actually shows in Madrid. The gap is
+  // the Madrid offset, DST included.
+  const fmt = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/Madrid',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  const parts = fmt.formatToParts(guess);
+  const get = (type: string) =>
+    Number.parseInt(parts.find((p) => p.type === type)?.value ?? '0', 10);
+  const displayedHour = get('hour') % 24;
+  const guessAsMadridWallClock = Date.UTC(
+    get('year'),
+    get('month') - 1,
+    get('day'),
+    displayedHour,
+    get('minute'),
+  );
+  const offsetMs = guessAsMadridWallClock - guess.getTime();
+
+  return new Date(guess.getTime() - offsetMs);
+}
+
+function safeDecode(value: string): string | null {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return null;
+  }
+}

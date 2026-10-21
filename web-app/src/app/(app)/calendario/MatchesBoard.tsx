@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import type { CompetitionId } from '@/constants/competitions';
 import type { Game } from '@/types';
+import { buildCalendarUrl } from '@/lib/calendarUrl';
 import { clubAliases, isClubMatch } from '@/lib/clubTeams';
 import { deriveMatchKey } from '@/lib/matchKey';
 import { nowInMadrid, parseSidgadDate } from '@/lib/matchDate';
@@ -78,12 +79,79 @@ function formatSentDate(sentAt: string): string {
   return d.toLocaleDateString('es-ES', { month: 'short', day: 'numeric' });
 }
 
+// Web-app origin used to build absolute URLs for the calendar link.
+//
+// In production we read `NEXT_PUBLIC_WEB_APP_URL` (set at build time so the
+// value is baked into the bundle). This is the deployed origin — e.g.
+// `https://team-matches-manager.vercel.app` — so the WhatsApp link the
+// recipient taps actually points at the live web-app, not at their own
+// phone's `localhost:3000`.
+//
+// In local development the env var is unset and we fall back to
+// `window.location.origin`, which is the dev-server origin. Local testing
+// against a real phone requires exposing the dev server via a tunnel
+// (ngrok, Cloudflare Tunnel) or using a Vercel preview deploy.
+const WEB_APP_BASE_URL: string =
+  process.env.NEXT_PUBLIC_WEB_APP_URL ||
+  (typeof window !== 'undefined' ? window.location.origin : '');
+
+// Date-only, for the convocatoria header. `formatMatchDate` includes the
+// kickoff time, which used to make the message read "…sábado, 24 de
+// octubre, 17:00 a las 17:00" — the same time twice. The time is appended
+// separately below, so this formatter deliberately omits it.
+function formatMatchDay(date?: string | null): string {
+  const d = parseSidgadDate(date, null);
+  if (!d) return '';
+  // See formatMatchDate for why 'UTC' is the right timeZone here.
+  return d.toLocaleDateString('es-ES', {
+    timeZone: 'UTC',
+    weekday: 'long',
+    day: '2-digit',
+    month: 'long',
+  });
+}
+
 function buildWhatsappUrl(game: Game, clubName: string): string {
-  const dateStr = formatMatchDate(game.date, game.time);
   let text = '';
-  text += `Próximo partido *${dateStr}* a las *${game.time ?? ''}* en ${game.location ?? ''} - ${game.map ?? ''}`;
-  text += `\n\n${game.local ?? ''} - ${game.visit ?? ''}`;
-  text += '\n\n1.';
+
+  // Header: the fixture itself, bolded. Leading with the matchup reads
+  // better than burying it under a sentence about when it is.
+  text += `*${game.local ?? '?'} - ${game.visit ?? '?'}*`;
+
+  // Facts, one per line, each prefixed with an emoji so the block scans
+  // at a glance on a phone instead of reading as a run-on sentence.
+  const day = formatMatchDay(game.date);
+  if (day) {
+    // Only print a time when the federation has confirmed one. Rendering a
+    // sentinel like "--:--" would tell the squad to turn up at a time that
+    // does not exist yet.
+    if (hasTime(game.time)) {
+      text += `\n\n🗓 ${day}, ${game.time}`;
+    } else {
+      text += `\n\n🗓 ${day} (hora por confirmar)`;
+    }
+  }
+  if (game.location) {
+    text += `\n📍 ${game.location}`;
+  }
+  // The map URL on its own line. Previously it was appended to the venue
+  // with a " - ", which made the line long enough to wrap and left a bare
+  // goo.gl link with nothing to describe it.
+  if (game.map) {
+    text += `\n🗺 ${game.map}`;
+  }
+
+  // One-tap "Add to calendar" — only for ready matches. When
+  // `buildCalendarUrl` returns null (missing date, sentinel time, etc.)
+  // the whole line is omitted so pending matches keep their current text.
+  // The URL goes on its own line because WhatsApp renders it as a tappable
+  // chip there; inline it just trails the label.
+  const calendarUrl = buildCalendarUrl(game, clubName, WEB_APP_BASE_URL);
+  if (calendarUrl) {
+    text += `\n📅 Añadir al calendario:\n${calendarUrl}`;
+  }
+
+  // Roster scaffold the volunteers fill in.
   text += '\n\nPorteros:\n1.';
   text += '\n\nDelegado:';
   if ((game.local || '').includes(clubName)) {
