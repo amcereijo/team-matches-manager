@@ -43,7 +43,20 @@ export function parseSidgadDate(
   if (!date) return null;
   const [day, month, year] = date.split('/');
   if (!day || !month || !year) return null;
-  const [hh = '00', mm = '00'] = (time ?? '').split(':');
+  // A missing time must degrade to midnight, not poison the whole parse.
+  //
+  // `''.split(':')` yields `['']`, so destructuring with defaults
+  // (`const [hh = '00'] = ...`) does NOT fall back to '00' — the empty
+  // string is a present element, not `undefined`. That left `hh = ''`,
+  // `parseInt('', 10) === NaN`, and the `Number.isFinite` guard below threw
+  // away a perfectly valid date. Every date-only caller (formatDayLabel,
+  // formatMatchDay) passes `null` for `time`, so the day label rendered as
+  // "Sin fecha y hora" even though the fixture had a full date (and, once
+  // a time exists, `isMatchReady` happily showed the time next to it).
+  // Coerce blank/undefined segments to '00' *before* parsing.
+  const [rawHh = '', rawMm = ''] = (time ?? '').split(':');
+  const hh = rawHh.trim() === '' ? '00' : rawHh.trim();
+  const mm = rawMm.trim() === '' ? '00' : rawMm.trim();
   const y = Number.parseInt(year, 10);
   const mo = Number.parseInt(month, 10);
   const d = Number.parseInt(day, 10);
