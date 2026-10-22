@@ -1,4 +1,5 @@
-import type { Game } from '@/types';
+import type { ClubType, Game } from '@/types';
+import type { CompetitionId } from '@/constants/competitions';
 import { clubAliases, isClubMatch } from '@/lib/clubTeams';
 import { parseSidgadDate } from '@/lib/matchDate';
 
@@ -13,6 +14,17 @@ export const MATCH_DURATION_MINUTES = 90;
  * behave.
  */
 export const CALENDAR_PATH_PREFIX = '/c';
+
+/**
+ * Path prefix for the public team calendar page. This is what the WhatsApp
+ * convocatoria links to: the recipient taps it and sees every upcoming fixture
+ * for their squad, rather than the single match the message is about.
+ *
+ * Unlike `/c`, this path carries an *identity* rather than a payload — the
+ * page fetches live upstream data instead of rendering what the address
+ * spells out. See design.md D1.
+ */
+export const TEAM_CALENDAR_PATH_PREFIX = '/t';
 
 // Sidgad's "kickoff not published yet" sentinels.
 const TIME_SENTINELS = [/^00:?00$/i, /^--:?--$/];
@@ -42,34 +54,105 @@ export function isMatchReady(game: Game): boolean {
   return /\d/.test(trimmed);
 }
 
+/**
+ * Does this side of the fixture belong to `club`?
+ *
+ * MUST use the same two-pronged rule as `getMatchesForClub`: the upstream
+ * `param_game` code AND the name aliases. Name matching alone is not enough,
+ * because the federation's squad names do not reliably derive from the
+ * catalogue's club names — `ALAMEDA DE OSUNA A` is club 386's
+ * `ALAMEDA OSUNA HP`. With aliases alone, neither side of
+ * `ALAMEDA DE OSUNA A - CDE EL CASAR A` looks like club 386, so any helper
+ * that then guesses "the away side is the rival" silently points at the
+ * wrong team.
+ */
+function isOurSide(team: string | null, teamCode: number | null, club: ClubType): boolean {
+  return teamCode === club.code || isClubMatch(team, clubAliases(club.name));
+}
+
 /** The team that is NOT one of the user's clubs. */
-export function opponentFor(game: Game, clubName: string): string {
-  const aliases = clubAliases(clubName);
-  const localIsUs = isClubMatch(game.local, aliases);
-  const visitIsUs = isClubMatch(game.visit, aliases);
+export function opponentFor(game: Game, club: ClubType): string {
+  const localIsUs = isOurSide(game.local, game.localCode, club);
+  const visitIsUs = isOurSide(game.visit, game.visitCode, club);
   if (localIsUs && !visitIsUs) return (game.visit ?? '').trim();
   if (visitIsUs && !localIsUs) return (game.local ?? '').trim();
   return (game.visit ?? '').trim();
 }
 
-/** Venue text, with the map URL appended in parentheses when present. */
+/**
+ * Venue text, with the map URL appended in parentheses when present.
+ */
 export function locationText(game: Game): string {
   if (!game.location) return '';
   return game.map ? `${game.location} (${game.map})` : game.location;
 }
 
 /**
- * Build the landing-page URL that goes into the WhatsApp message.
+ * The squad a convocatoria is for: the side of the fixture that belongs to the
+ * user's own club.
+ *
+ * This is deliberately NOT the club. A club like `HL NOROESTE` can field
+ * several squads (`HL NOROESTE A`, `HL NOROESTE B`) and each plays its own
+ * fixtures; a player convoked for `NOROESTE A` wants that squad's calendar,
+ * not the whole club's. `clubAliases` is what bridges the gap — the catalogue
+ * stores one base name per club, and the fixtures carry the suffixed squad
+ * names.
+ *
+ * Returns `null` only when neither side is usable at all, which is the signal
+ * for the caller to omit the link line entirely.
+ */
+export function squadFor(game: Game, club: ClubType): string | null {
+  const localIsUs = isOurSide(game.local, game.localCode, club);
+  const visitIsUs = isOurSide(game.visit, game.visitCode, club);
+  if (localIsUs && game.local) return game.local;
+  if (visitIsUs && game.visit) return game.visit;
+  // Defensive: neither side identified as ours (an upstream rename, a fixture
+  // for a club we have no code or alias for). Fall back to the away side,
+  // mirroring `opponentFor`, so the link still points at something real.
+  return game.visit?.trim() || null;
+}
+
+/**
+ * Build the team calendar URL that goes into the WhatsApp message.
+ *
+ * Returns null when the squad cannot be determined, so the caller omits the
+ * line rather than emitting a broken link.
+ *
+ * There is no readiness gate here, unlike `buildCalendarUrl`: the squad name
+ * is readable off any fixture, ready or pending, so a match with no confirmed
+ * kickoff time still gets a link (the linked page shows it as
+ * "hora por confirmar").
+ */
+export function buildTeamCalendarUrl(
+  club: { competition: CompetitionId; code: number },
+  squad: string | null,
+  baseUrl: string,
+): string | null {
+  if (!squad) return null;
+  const segments = [
+    club.competition,
+    String(club.code),
+    squad,
+  ].map((s) => encodeURIComponent(s));
+  return `${baseUrl.replace(/\/$/, '')}${TEAM_CALENDAR_PATH_PREFIX}/${segments.join('/')}`;
+}
+
+/**
+ * Build the single-match landing-page URL that goes into the WhatsApp message.
  * Returns null for a not-ready match so the caller omits the line.
+ *
+ * This is the one-tap "add THIS match" action. It coexists with
+ * `buildTeamCalendarUrl` below — the message carries both links: this one for
+ * the match being convoked, the other for the squad's full schedule.
  */
 export function buildCalendarUrl(
   game: Game,
-  clubName: string,
+  club: ClubType,
   baseUrl: string,
 ): string | null {
   if (!isMatchReady(game)) return null;
 
-  const opponent = opponentFor(game, clubName);
+  const opponent = opponentFor(game, club);
   const title = opponent
     ? `Game with ${opponent}`
     : `${game.local ?? ''} - ${game.visit ?? ''}`.trim();
@@ -97,8 +180,14 @@ export function buildCalendarUrl(
  * A malformed escape (`100% CP`, a bare `%`) throws; that is not an error
  * here, it just means the value is not percent-encoded at this layer. Keep
  * what we have and stop rather than failing the whole request.
+ *
+ * Exported for the `/t` team calendar route, whose squad path segment travels
+ * over the same WhatsApp relay and takes the same damage. It is used there
+ * together with whitespace normalisation, because a mangled relay can turn an
+ * encoded space into `+` or a doubled space — see `normalizeSquadSegment` in
+ * that route.
  */
-function decodeFully(value: string): string {
+export function decodeFully(value: string): string {
   let out = value;
   for (let i = 0; i < 3; i++) {
     let next: string;

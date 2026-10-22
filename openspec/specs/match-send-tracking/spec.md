@@ -153,59 +153,112 @@ The Calendario's existing `ShareInfoPanel` ("Cómo funciona Enviar") MUST explai
 
 ### Requirement: Convocatoria includes a one-tap "Add to calendar" link for ready matches
 
-When the Calendario builds the WhatsApp convocatoria text for a ready match (one where `isMatchReady(row)` is true — has both a `date` and a non-sentinel `time`), the text MUST contain a single extra line of the form `📅 Añadir al calendario: <url>` placed **after** the `<local> - <visit>` line and **before** the first numbered slot of the player list. The line MUST be separated from the surrounding text by exactly one blank line above it (so it reads as its own block in WhatsApp).
+> **Name note.** The header keeps its original wording so the requirement is matched to the existing one at archive time. This change **adds a second link alongside** the existing one — it does not replace it.
 
-For a match that is NOT ready (no `date`, or a sentinel/missing `time` like `00:00` or `--:--`), the line MUST be omitted entirely — the convocatoria text matches today's behavior byte-for-byte.
+When the Calendario builds the WhatsApp convocatoria text for a match, the text MUST contain the line `📅 Añadir al calendario:` followed by the single-match landing-page URL, in its existing slot: after the fixture facts block (kickoff, venue, map link) and before the `Porteros:` roster scaffold, on its own line. This line MUST be emitted **only for ready matches** (those with both a date and a confirmed kickoff time), exactly as today.
 
-The URL MUST point at the web-app's **calendar landing page**, which renders a human-readable summary of the match plus a single button that opens the device's calendar app directly. The URL MUST be encoded as **path segments**, NOT query parameters:
+The text MUST additionally contain a second line, `📅 Calendario del equipo:` followed by the public team calendar URL `/t/<competition>/<clubCode>/<squad>`, separated from the add-to-calendar block by a blank line and from the `Porteros:` block by a blank line. The two links serve different intents and both MUST be present:
 
-```
-<WEB_APP_BASE_URL>/c/<date>-<time>/<title-slug>/<location-slug>
-```
+- **Add to calendar** — the one-tap action for *this* fixture, on the stateless single-match page.
+- **Team calendar** — the standing reference to *the squad's full upcoming schedule*, on the live page.
 
-`<WEB_APP_BASE_URL>` is the public origin of the deployed web-app — read from the `NEXT_PUBLIC_WEB_APP_URL` env var in production builds, falling back to `window.location.origin` in development. Each segment MUST be encoded with `encodeURIComponent` (so spaces become `%20` and special characters are percent-encoded). The URL MUST NOT contain any `&` or `?` characters that could trigger WhatsApp's URL line-wrap to break the link visually.
+The `<squad>` MUST be the squad the convocatoria is for: the side of the fixture belonging to the user's own club. Determining that side MUST use the upstream `param_game` club codes as well as the club's name aliases, because the federation's squad names do not reliably derive from the catalogue's club names (`ALAMEDA DE OSUNA A` is club 386's `ALAMEDA OSUNA HP`). A name-alias-only test matches neither side of such a fixture and produces a link scoped to the rival. If `local` belongs to the club the squad is `local`; if `visit` does, the squad is `visit`. If neither side can be identified, the team-calendar line MUST be omitted and the rest of the message MUST be unchanged.
 
-**Path segments:**
+The team-calendar line MUST NOT be gated on match readiness: the squad name is readable off any fixture, so the line is derivable for a pending match too. The Calendario's "Enviar" control continues to render only for matches with a confirmed date and time, which is unchanged and out of scope.
 
-- `date` — `dd/mm/yyyy` from sidgad (e.g. `18/10/2026`), URL-encoded as `18%2F10%2F2026`. The route decodes it back to `18/10/2026` before parsing.
-- `time` — `hh:mm` (e.g. `18:30`), URL-encoded as `18%3A30`.
-- `title-slug` — the event title as `Game with <opponent>` (see *Event title rule*), URL-encoded.
-- `location-slug` — the venue name, URL-encoded. If `map` is present, the location-slug is `<location> (<map URL>)` (URL-encoded); if absent, just `<location>`.
+Each URL segment MUST be encoded with `encodeURIComponent`. Neither URL may contain any `&` or `?` characters, which would cause WhatsApp to wrap the link into unclickable fragments.
 
-The SAME URL serves only HTML — a standalone landing page. The route MUST NOT serve an iCalendar document and MUST NOT expose any `.ics` download.
+`<WEB_APP_BASE_URL>` — the public origin of the deployed web-app — MUST be read from the `NEXT_PUBLIC_WEB_APP_URL` env var in production builds, falling back to `window.location.origin` in development, for **both** URLs.
 
-The `webcal://` URL that the landing page's button navigates to is the SAME path with the `webcal:` scheme: `webcal://<host>/c/<when>/<title>/<location>`.
-
-Two mechanisms were evaluated and rejected before landing on Google Calendar:
+Two mechanisms were evaluated and rejected before landing on Google Calendar, and remain rejected for the per-match "Añadir a calendario" action:
 
 - **iCalendar (`.ics`)** — pointing an `https://` link at a `text/calendar` payload makes Android and iOS **download the file** rather than hand it to the calendar app, adding a download-notification or file-manager step. Rejected: the user does not want a file download.
-- **`webcal://`** — Android and iOS both register it with calendar apps, but the button was inert in Chrome on Android, and the scheme is not universally honoured. Rejected: the mechanism does not work reliably.
+- **`webcal://`** — Android and iOS both register it with calendar apps, but the scheme is not universally honoured and was inert in Chrome on Android. Rejected: the mechanism does not work reliably.
 
-The landing page therefore links to **Google Calendar**, which is the one mechanism that opens the calendar app on both Android and desktop without a download.
-
-Why a landing page rather than the Google Calendar link directly in the message: a `calendar.google.com/...?a=1&b=2…` URL is long and full of `&` separators, which WhatsApp wraps mid-token — the link renders as broken fragments and stops being tappable as one unit. Path segments contain no `&`, so this page's URL survives the message intact, and the page gives the recipient something readable before they commit.
-
-Next.js does not permit a `page.tsx` and a `route.ts` at the same path. Since the landing page is the only representation of this URL, this is not a constraint — the route handler renders the HTML directly, which means the page is plain server-rendered HTML and cannot use a CSS module or a client component.
+Both public pages therefore offer **Google Calendar**, reached by tapping a button on the page rather than by putting a Google URL in the message: a `calendar.google.com/...?a=1&b=2…` URL is long and full of `&` separators, which WhatsApp wraps mid-token.
 
 #### Scenario: Ready match, local is "us"
 
-- **WHEN** the Calendario builds the convocatoria for a ready match where `local` is one of the user's clubs (per `clubAliases`/`isClubMatch`), `visit` is "RIVAL", the kickoff is `18:30` Europe/Madrid on `18/10/2026`, `location` is "Pabellón X" and `map` is "https://maps.example/pabellon-x", and `<WEB_APP_BASE_URL>` is `https://team-matches-manager.vercel.app`
-- **THEN** the text contains the line `📅 Añadir al calendario: https://team-matches-manager.vercel.app/c/18%2F10%2F2026-18%3A30/Game%20with%20RIVAL/Pabell%C3%B3n%20X%20(https%3A%2F%2Fmaps.example%2Fpabellon-x)` immediately after the `Local - Visit` line, separated by one blank line, and the URL contains NO `&` or `?` characters
+- **WHEN** the Calendario builds the convocatoria for a ready match between club FGP 438 (catalogue name `HL NOROESTE`) and `RIVAL`, where the fixture's squad is `HL NOROESTE A`
+- **THEN** the text contains `📅 Añadir al calendario:` with the `/c/…` URL, then a blank line, then `📅 Calendario del equipo:` with `/t/FGP/438/HL%20NOROESTE%20A`, then a blank line, then `Porteros:`
 
-#### Scenario: WhatsApp preview shows the URL unbroken
+#### Scenario: Squad is taken from the visit side
 
-- **WHEN** the URL produced for a ready match has length > 100 chars after URL-encoding
-- **THEN** the URL still contains no `&` or `?` characters that could trigger WhatsApp's URL line-wrap behavior. The whole URL is displayed as a single contiguous link in the WhatsApp message preview.
+- **WHEN** `local` is a rival and `visit` belongs to the user's club
+- **THEN** the team-calendar URL's squad segment is the `visit` name, and the `/c` title names the `local` side as the opponent
+
+#### Scenario: Club code decides which side is ours when the names diverge
+
+- **WHEN** the club's catalogue name is `ALAMEDA OSUNA HP` (code 386) and the fixture is `ALAMEDA DE OSUNA A` vs `CDE EL CASAR A`, so neither side matches the name aliases
+- **THEN** the team-calendar URL's squad segment is `ALAMEDA%20DE%20OSUNA%20A` — identified via the `param_game` code — and NOT the rival `CDE%20EL%20CASAR%20A`
+
+#### Scenario: Away fixture names the right opponent
+
+- **WHEN** the fixture is `COSLADA RH A` vs `ALAMEDA DE OSUNA A` for club 386
+- **THEN** the `/c` title is `Game with COSLADA RH A`, never `Game with ALAMEDA DE OSUNA A`
+
+#### Scenario: Squad-scope prevents cross-squad leakage
+
+- **WHEN** the club fields both `HL NOROESTE A` and `HL NOROESTE B` and the convocatoria is for a `NOROESTE A` fixture
+- **THEN** the URL's squad segment is `HL%20NOROESTE%20A`, so the linked page lists only that squad's fixtures
 
 #### Scenario: Pending match — line is omitted
 
-- **WHEN** the Calendario builds the convocatoria for a match whose `time` is `--:--` or missing
-- **THEN** the produced text contains no `📅` character and no `team-matches-manager.vercel.app` URL; the text matches the current implementation byte-for-byte
+- **WHEN** the match's `time` is `--:--` or missing
+- **THEN** the `📅 Añadir al calendario:` line is omitted entirely (unchanged behaviour) while the `📅 Calendario del equipo:` line is still derivable, because the squad name is readable off a fixture regardless of whether the kickoff is confirmed
+
+#### Scenario: WhatsApp preview shows the URL unbroken
+
+- **WHEN** either URL exceeds 100 chars after URL-encoding
+- **THEN** neither contains `&` or `?` characters, and both render as single contiguous links in the WhatsApp message preview
+
+#### Scenario: Roster scaffold is unchanged
+
+- **WHEN** the convocatoria is built for any match
+- **THEN** the `Porteros:` / `Delegado:` / `Anotador:` / `No puede:` block is byte-for-byte identical to its current form
+
+#### Scenario: Neither side is the user's club
+
+- **WHEN** neither side can be identified as the user's club by code or alias
+- **THEN** the `📅 Calendario del equipo:` line is omitted and the rest of the message is unchanged
+
+#### Scenario: Production build uses the env var
+
+- **WHEN** `NEXT_PUBLIC_WEB_APP_URL=https://team-matches-manager.vercel.app` is set at build time
+- **THEN** both URLs' origins are `https://team-matches-manager.vercel.app`, regardless of `window.location.origin`
+
+#### Scenario: Local development falls back to window.location.origin
+
+- **WHEN** `NEXT_PUBLIC_WEB_APP_URL` is NOT set and the Calendario runs in a browser
+- **THEN** both URLs' origins are `window.location.origin`
 
 #### Scenario: Ready match with no map URL
 
-- **WHEN** the Calendario builds the convocatoria for a ready match with `location: "Pabellón X"` and `map: null`
-- **THEN** the location-slug is just `Pabell%C3%B3n%20X` with no trailing map reference and no empty parentheses
+- **WHEN** the Calendario builds the convocatoria for a match whose `location` is `Pabellón X` and whose `map` is null
+- **THEN** the `/c` URL carries the venue without a trailing map reference and with no empty parentheses
+
+### Requirement: The single-match landing page is retained alongside the team calendar
+
+The `/c/[...]` single-match landing page MUST remain present, reachable without authentication, and behaviourally unchanged after the team calendar link is added to the same message. It MUST NOT be removed, redirected, or repurposed.
+
+The page's existing requirements — the standalone HTML contract, the Google Calendar button shape, the not-ready kickoff rejection, and the no-auth reachability guarantee — continue to apply unchanged.
+
+The two public pages have deliberately different failure profiles and both MUST continue to exist: `/c` performs no upstream I/O and cannot fail, whereas the team calendar page reads live upstream data and can be stale or unavailable. `/c` is the message's primary calendar link and the only page that still works when the federation is unreachable.
+
+#### Scenario: A link sent before this change still works
+
+- **WHEN** a recipient opens a `/c/[...]` link that was sent in a convocatoria before this change
+- **THEN** the page renders exactly as it does today, with its calendar button, and without any redirect
+
+#### Scenario: Route remains anonymous
+
+- **WHEN** a request to `/c/[...]` arrives with no session
+- **THEN** it responds with the landing page — retaining this route introduces no auth requirement
+
+#### Scenario: Team calendar failure does not affect `/c`
+
+- **WHEN** the team calendar page cannot reach the fixture source
+- **THEN** it renders its own explanatory error; the `/c` page is not modified, redirected, or relied upon
 
 ### Requirement: Calendar landing page
 

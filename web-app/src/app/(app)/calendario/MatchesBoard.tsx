@@ -2,8 +2,9 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import type { CompetitionId } from '@/constants/competitions';
-import type { Game } from '@/types';
-import { buildCalendarUrl } from '@/lib/calendarUrl';
+import type { ClubType, Game } from '@/types';
+import { buildCalendarUrl, buildTeamCalendarUrl } from '@/lib/calendarUrl';
+import { squadFor } from '@/lib/calendarEvent';
 import { clubAliases, isClubMatch } from '@/lib/clubTeams';
 import { deriveMatchKey } from '@/lib/matchKey';
 import { nowInMadrid, parseSidgadDate } from '@/lib/matchDate';
@@ -111,8 +112,22 @@ function formatMatchDay(date?: string | null): string {
   });
 }
 
-function buildWhatsappUrl(game: Game, clubName: string): string {
+function buildWhatsappUrl(
+  game: Game,
+  clubName: string,
+  competition?: CompetitionId,
+  clubCode?: number,
+): string {
   let text = '';
+
+  // Both link builders need the whole club (code + name), because "which side
+  // of the fixture is ours" is decided from the `param_game` codes as well as
+  // the name aliases. Reassembled here from the props the board already
+  // receives; `username` is unused by either builder.
+  const club: ClubType | null =
+    competition !== undefined && clubCode !== undefined
+      ? { competition, code: clubCode, name: clubName, username: '' }
+      : null;
 
   // Header: the fixture itself, bolded. Leading with the matchup reads
   // better than burying it under a sentence about when it is.
@@ -141,14 +156,32 @@ function buildWhatsappUrl(game: Game, clubName: string): string {
     text += `\n🗺 ${game.map}`;
   }
 
-  // One-tap "Add to calendar" — only for ready matches. When
-  // `buildCalendarUrl` returns null (missing date, sentinel time, etc.)
-  // the whole line is omitted so pending matches keep their current text.
+  // One-tap "Add to calendar" for THIS match — the single-match landing page.
+  // Only for ready matches: when `buildCalendarUrl` returns null (missing
+  // date, sentinel time, etc.) the whole line is omitted so pending matches
+  // keep their current text.
   // The URL goes on its own line because WhatsApp renders it as a tappable
   // chip there; inline it just trails the label.
-  const calendarUrl = buildCalendarUrl(game, clubName, WEB_APP_BASE_URL);
+  const calendarUrl = club ? buildCalendarUrl(game, club, WEB_APP_BASE_URL) : null;
   if (calendarUrl) {
     text += `\n📅 Añadir al calendario:\n${calendarUrl}`;
+  }
+
+  // Link to the squad's public team calendar — the full upcoming schedule,
+  // rather than the single match being convoked. Unlike the line above this
+  // one has NO readiness gate: the squad name is readable off any fixture,
+  // so the builder can always derive it. Only a fixture whose squad cannot
+  // determined at all omits the line.
+  //
+  // Both links are emitted deliberately: the first is the action for this
+  // fixture, the second is the standing reference the player can return to.
+  const teamUrl = club
+    ? buildTeamCalendarUrl(club, squadFor(game, club), WEB_APP_BASE_URL)
+    : null;
+  if (teamUrl) {
+    // Blank line before the roster AND between the two link blocks, so the
+    // two URLs read as distinct actions rather than one run-on paragraph.
+    text += `\n\n📅 Calendario del equipo:\n${teamUrl}`;
   }
 
   // Roster scaffold the volunteers fill in.
@@ -435,14 +468,14 @@ export function MatchesBoard({
                 ) : (
                   <a
                     className={styles.sendWhatsButton}
-                    href={buildWhatsappUrl(row, clubName)}
+                    href={buildWhatsappUrl(row, clubName, competition, clubCode)}
                     target="_blank"
                     rel="noopener noreferrer"
                     aria-label={`Compartir ${row.local} vs ${row.visit} por WhatsApp`}
                     onClick={(e) => {
                       if (!matchKey) return;
                       e.preventDefault();
-                      window.open(buildWhatsappUrl(row, clubName), '_blank');
+                      window.open(buildWhatsappUrl(row, clubName, competition, clubCode), '_blank');
                       const now = new Date().toISOString();
                       setLocalSent((prev) => ({ ...prev, [matchKey]: now }));
                       fetch('/api/matches/sent', {

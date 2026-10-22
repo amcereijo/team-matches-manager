@@ -66,6 +66,34 @@ export function parseSidgadDate(
   return partsToDate(y, mo, d, h, mi);
 }
 
+/**
+ * How long before a match the federation may still move it.
+ *
+ * Sidgad schedules on weekends, so a fixture's own date is its weekend day and
+ * no separate snapping back to the preceding Saturday is needed.
+ */
+export const TEMPORAL_WARNING_DAYS = 15;
+
+/**
+ * Is this fixture's date still open to change?
+ *
+ * The federation reschedules a fixture up until roughly two weeks before it is
+ * played. Inside that window the date is settled, and telling a reader it
+ * "might change" would be false — so callers use this to drop the warning once
+ * the window closes rather than showing it forever.
+ *
+ * A `null` kickoff (unparseable date) is treated as provisional: we cannot
+ * prove it is settled, so we do not claim it is.
+ *
+ * Both `kickoff` and `now` must come from `parseSidgadDate` / `nowInMadrid`,
+ * which encode Madrid wall-clock components in the Date's UTC slots, so
+ * `getTime()` compares like-for-like regardless of the host timezone.
+ */
+export function isDateProvisional(kickoff: Date | null, nowMs: number): boolean {
+  if (!kickoff) return true;
+  return nowMs < kickoff.getTime() - TEMPORAL_WARNING_DAYS * 86_400_000;
+}
+
 // Returns the current Madrid wall-clock instant encoded the same way as
 // parseSidgadDate: UTC fields = Madrid components, getTime() comparable to
 // a parseSidgadDate result.

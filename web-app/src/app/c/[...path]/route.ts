@@ -3,6 +3,7 @@ import {
   formatSpanishKickoff,
   parseEventPath,
 } from '@/lib/calendarEvent';
+import { escapeHtml, splitVenue } from '@/lib/html';
 
 // Public calendar landing page — no iron-session, no auth, no I/O, no state.
 // The URL is shared via WhatsApp to recipients who are NOT club admins.
@@ -23,22 +24,6 @@ import {
 // and `webcal://` is not honoured by every browser/OS combination (on Android
 // Chrome the button did nothing at all). The Google Calendar link is the one
 // mechanism that works on both Android and desktop without a download.
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-// `buildCalendarUrl` packs `<location> (<map URL>)` into a single segment.
-function splitVenue(location: string): { venue: string; map: string | null } {
-  const m = location.match(/^(.*?)\s*\((https?:\/\/[^)]+)\)$/);
-  if (m) return { venue: m[1].trim(), map: m[2] };
-  return { venue: location, map: null };
-}
 
 function buildPageHtml(event: {
   title: string;
