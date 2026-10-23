@@ -154,12 +154,16 @@ The Calendario's existing `ShareInfoPanel` ("Cómo funciona Enviar") MUST explai
 ### Requirement: Convocatoria includes a one-tap "Add to calendar" link for ready matches
 > **Name note.** The header keeps its original wording so the requirement is matched to the existing one at archive time. This change **adds a second link alongside** the existing one — it does not replace it.
 
-When the Calendario builds the WhatsApp convocatoria text for a match, the text MUST contain the line `📅 Añadir al calendario:` followed by the single-match landing-page URL, in its existing slot: after the fixture facts block (kickoff, venue, map link) and before the `Porteros:` roster scaffold, on its own line. This line MUST be emitted **only for ready matches** (those with both a date and a confirmed kickoff time), exactly as today.
+When the Calendario builds the WhatsApp convocatoria text for a match, the text MUST contain the line `📅 Añadir al calendario:` followed by the single-match landing-page URL, in its existing slot: after the fixture facts block (kickoff, venue, map link) and before the roster scaffold, on its own line. This line MUST be emitted **only for ready matches** (those with both a date and a confirmed kickoff time), exactly as today.
 
-The text MUST additionally contain a second line, `📅 Calendario del equipo:` followed by the public team calendar URL, separated from the add-to-calendar block by a blank line and from the `Porteros:` block by a blank line. The two links serve different intents and both MUST be present:
+The text MUST additionally contain a second line, `📅 Calendario del equipo:` followed by the public team calendar URL. The two links serve different intents and both MUST be present:
 
 - **Add to calendar** — the one-tap action for *this* fixture, on the stateless single-match page.
 - **Team calendar** — the standing reference to *the squad's full upcoming schedule*, on the live page.
+
+**The team-calendar link belongs at the bottom of the message.** It MUST be emitted after the roster scaffold — after the `No puede:` block — separated from it by a blank line. It MUST NOT appear between the two action blocks or in the middle of the roster: the message reads top-down as facts → the action for this fixture → the roster the volunteers fill in → the standing reference.
+
+**The player roster belongs right after the add-to-calendar link.** When the `📅 Añadir al calendario:` line is present, the text MUST contain a `Jugadores:` block immediately after it, shaped like the other roster lines — `Jugadores:` on its own line and `1.` on the next — separated from the add-to-calendar block by one blank line and from the `Porteros:` block by one blank line. The `Jugadores:` block MUST NOT be emitted when the add-to-calendar line is omitted, since it belongs to that block.
 
 Both URLs MUST be carried by the message as **short links** of the shape `/link/<hash>`, resolved through the app's own link store, so that the message carries short, opaque, revocable URLs instead of long paths that spell out the club, the squad and the venue. A short link MUST resolve to exactly the canonical URL it replaces — `/c/<when>/<title>/<location>` for the single-match page and `/t/<competition>/<clubCode>/<squad>` for the team calendar — and MUST land the recipient on that same page.
 
@@ -175,7 +179,7 @@ Each URL segment MUST be encoded with `encodeURIComponent`. Neither URL may cont
 
 `<WEB_APP_BASE_URL>` — the public origin of the deployed web-app — MUST be read from the `NEXT_PUBLIC_WEB_APP_URL` env var in production builds, falling back to `window.location.origin` in development, for **both** URLs.
 
-Two mechanisms were evaluated and rejected before landing on Google Calendar, and remain rejected for the per-match "Añadir a calendario" action:
+Two mechanisms were evaluated and rejected before landing on Google Calendar, and remain rejected for the per-match "Añadir al calendario" action:
 
 - **iCalendar (`.ics`)** — pointing an `https://` link at a `text/calendar` payload makes Android and iOS **download the file** rather than hand it to the calendar app, adding a download-notification or file-manager step. Rejected: the user does not want a file download.
 - **`webcal://`** — Android and iOS both register it with calendar apps, but the scheme is not universally honoured and was inert in Chrome on Android. Rejected: the mechanism does not work reliably.
@@ -185,7 +189,22 @@ Both public pages therefore offer **Google Calendar**, reached by tapping a butt
 #### Scenario: Ready match, local is "us"
 
 - **WHEN** the Calendario builds the convocatoria for a ready match between club FGP 438 (catalogue name `HL NOROESTE`) and `RIVAL`, where the fixture's squad is `HL NOROESTE A`
-- **THEN** the text contains `📅 Añadir al calendario:` with a short link, then a blank line, then `📅 Calendario del equipo:` with a short link, then a blank line, then `Porteros:`; the two short links resolve to `/c/…` for the fixture and to `/t/FGP/438/HL%20NOROESTE%20A` for the squad
+- **THEN** the text contains `📅 Añadir al calendario:` with a short link, then a blank line, then `Jugadores:` / `1.`, then a blank line, then `Porteros:` / `1.`, then `Delegado:`, then `No puede:`, then a blank line, then `📅 Calendario del equipo:` with a short link; the two short links resolve to `/c/…` for the fixture and to `/t/FGP/438/HL%20NOROESTE%20A` for the squad
+
+#### Scenario: The team-calendar link is at the bottom
+
+- **WHEN** the convocatoria is built for a ready match
+- **THEN** the `📅 Calendario del equipo:` line is the last block of the message, after the `No puede:` line and separated from it by a blank line
+
+#### Scenario: The player roster follows the add-to-calendar link
+
+- **WHEN** the `📅 Añadir al calendario:` line is present
+- **THEN** the text continues with a blank line, then `Jugadores:`, then `1.`, then a blank line, then `Porteros:`
+
+#### Scenario: No player roster without the add-to-calendar link
+
+- **WHEN** the match has no confirmed kickoff, so the `📅 Añadir al calendario:` line is omitted
+- **THEN** the `Jugadores:` block is omitted too, and the message goes straight from the facts to the roster scaffold
 
 #### Scenario: Squad is taken from the visit side
 

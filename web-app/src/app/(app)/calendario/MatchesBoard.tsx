@@ -250,24 +250,13 @@ function buildWhatsappUrl(
   const calendarUrl = canonicalMatchUrl ? shortLinks?.match ?? canonicalMatchUrl : null;
   if (calendarUrl) {
     text += `\n📅 Añadir al calendario:\n${calendarUrl}`;
-  }
 
-  // Link to the squad's public team calendar — the full upcoming schedule,
-  // rather than the single match being convoked. Unlike the line above this
-  // one has NO readiness gate: the squad name is readable off any fixture,
-  // so the builder can always derive it. Only a fixture whose squad cannot
-  // determined at all omits the line.
-  //
-  // Both links are emitted deliberately: the first is the action for this
-  // fixture, the second is the standing reference the player can return to.
-  const canonicalTeamUrl = club
-    ? buildTeamCalendarUrl(club, squadFor(game, club), WEB_APP_BASE_URL)
-    : null;
-  const teamUrl = canonicalTeamUrl ? shortLinks?.team ?? canonicalTeamUrl : null;
-  if (teamUrl) {
-    // Blank line before the roster AND between the two link blocks, so the
-    // two URLs read as distinct actions rather than one run-on paragraph.
-    text += `\n\n📅 Calendario del equipo:\n${teamUrl}`;
+    // The player roster, right under the link that invites the squad to
+    // turn up: the volunteers write the numbers down here. It hangs off the
+    // link on purpose — the two disappear together, so a pending match
+    // (which has no add-to-calendar link) never carries a player list
+    // nobody asked for.
+    text += '\n\nJugadores:\n1.';
   }
 
   // Roster scaffold the volunteers fill in.
@@ -277,6 +266,26 @@ function buildWhatsappUrl(
     text += '\nAnotador:';
   }
   text += '\n\nNo puede:';
+
+  // Link to the squad's public team calendar — the full upcoming schedule,
+  // rather than the single match being convoked. Unlike the add-to-calendar
+  // line above, this one has NO readiness gate: the squad name is readable
+  // off any fixture, so the builder can always derive it. Only a fixture
+  // whose squad cannot be determined at all omits the line.
+  //
+  // It goes at the BOTTOM of the message: the two links serve different
+  // intents and both are present, but the team calendar is the standing
+  // reference, not the action for this fixture — so it closes the message,
+  // after the roster the volunteers are filling in.
+  const canonicalTeamUrl = club
+    ? buildTeamCalendarUrl(club, squadFor(game, club), WEB_APP_BASE_URL)
+    : null;
+  const teamUrl = canonicalTeamUrl ? shortLinks?.team ?? canonicalTeamUrl : null;
+  if (teamUrl) {
+    // Blank line before the block, the same spacing every other block uses.
+    text += `\n\n📅 Calendario del equipo:\n${teamUrl}`;
+  }
+
   text += '\n\n';
   return `https://wa.me/?text=${encodeURIComponent(text)}`;
 }
