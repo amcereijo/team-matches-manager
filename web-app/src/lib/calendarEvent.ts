@@ -113,6 +113,29 @@ export function squadFor(game: Game, club: ClubType): string | null {
 }
 
 /**
+ * Build the team calendar path — `/t/<competition>/<code>/<squad>`.
+ *
+ * Split out from `buildTeamCalendarUrl` so the short-link store can derive the
+ * very same path from its stored parameters without an origin. There is one
+ * definition of the path shape; the URL builder only prepends the origin.
+ *
+ * Returns null when the squad cannot be determined, so the caller omits the
+ * line rather than emitting a broken link.
+ */
+export function buildTeamCalendarPath(
+  club: { competition: CompetitionId; code: number },
+  squad: string | null,
+): string | null {
+  if (!squad) return null;
+  const segments = [
+    club.competition,
+    String(club.code),
+    squad,
+  ].map((s) => encodeURIComponent(s));
+  return `${TEAM_CALENDAR_PATH_PREFIX}/${segments.join('/')}`;
+}
+
+/**
  * Build the team calendar URL that goes into the WhatsApp message.
  *
  * Returns null when the squad cannot be determined, so the caller omits the
@@ -128,13 +151,28 @@ export function buildTeamCalendarUrl(
   squad: string | null,
   baseUrl: string,
 ): string | null {
-  if (!squad) return null;
+  const path = buildTeamCalendarPath(club, squad);
+  if (!path) return null;
+  return `${baseUrl.replace(/\/$/, '')}${path}`;
+}
+
+/**
+ * Build the single-match landing-page path —
+ * `/c/<when>/<title>/<location>`.
+ *
+ * Split out from `buildCalendarUrl` for the same reason as
+ * `buildTeamCalendarPath`: the short-link store derives the canonical target
+ * from stored parameters (date, time, title, venue) and must produce the very
+ * same path the calendar link produces.
+ */
+export function buildCalendarPath(event: MatchEvent): string {
   const segments = [
-    club.competition,
-    String(club.code),
-    squad,
+    `${event.date ?? ''}-${event.time ?? ''}`,
+    event.title,
+    event.location,
   ].map((s) => encodeURIComponent(s));
-  return `${baseUrl.replace(/\/$/, '')}${TEAM_CALENDAR_PATH_PREFIX}/${segments.join('/')}`;
+
+  return `${CALENDAR_PATH_PREFIX}/${segments.join('/')}`;
 }
 
 /**
@@ -157,13 +195,14 @@ export function buildCalendarUrl(
     ? `Game with ${opponent}`
     : `${game.local ?? ''} - ${game.visit ?? ''}`.trim();
 
-  const segments = [
-    `${game.date ?? ''}-${game.time ?? ''}`,
+  const path = buildCalendarPath({
     title,
-    locationText(game),
-  ].map((s) => encodeURIComponent(s));
+    date: game.date ?? '',
+    time: game.time ?? '',
+    location: locationText(game),
+  });
 
-  return `${baseUrl.replace(/\/$/, '')}${CALENDAR_PATH_PREFIX}/${segments.join('/')}`;
+  return `${baseUrl.replace(/\/$/, '')}${path}`;
 }
 
 /**

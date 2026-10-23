@@ -5,7 +5,7 @@ import type { CompetitionId } from '@/constants/competitions';
 import type { ClubType, Game } from '@/types';
 import { buildCalendarUrl, buildTeamCalendarUrl } from '@/lib/calendarUrl';
 import { squadFor } from '@/lib/calendarEvent';
-import { clubAliases, isClubMatch } from '@/lib/clubTeams';
+import { squadsForMatches } from '@/lib/clubTeams';
 import { deriveMatchKey } from '@/lib/matchKey';
 import { nowInMadrid, parseSidgadDate } from '@/lib/matchDate';
 import { getItem, setItem } from '@/services/storage';
@@ -112,11 +112,91 @@ function formatMatchDay(date?: string | null): string {
   });
 }
 
+/**
+ * The short links the app resolved for a share, if any.
+ *
+ * `match` is the one-tap add-to-calendar link, `team` the squad's calendar.
+ * Both are optional: when the link store cannot be reached, the message is
+ * composed with the canonical URLs instead — which is exactly what it did
+ * before short links existed.
+ */
+type ShortLinks = { match?: string; team?: string };
+
+// How long the share waits for the link store before giving up and using the
+// canonical URLs. A share that waits on an unreachable store is worse than a
+// share with a long URL.
+const SHORT_LINK_TIMEOUT_MS = 2500;
+
+/**
+ * Ask the link store for the short URLs of this fixture's two links.
+ *
+ * Best-effort by design: any failure — timeout, non-2xx, malformed answer —
+ * resolves to an empty map, and the caller composes the message with the
+ * canonical URLs. The club never sees an error, because there is nothing for
+ * them to act on: the message is complete either way.
+ */
+async function resolveShortLinks(
+  game: Game,
+  clubName: string,
+  competition?: CompetitionId,
+  clubCode?: number,
+): Promise<ShortLinks> {
+  if (competition === undefined || clubCode === undefined) return {};
+
+  const club: ClubType = { competition, code: clubCode, name: clubName, username: '' };
+  const squad = squadFor(game, club);
+
+  const requests: Record<string, unknown>[] = [];
+  if (isMatchReady(game)) {
+    requests.push({
+      kind: 'match_calendar',
+      date: game.date,
+      time: game.time,
+      local: game.local,
+      visit: game.visit,
+      localCode: game.localCode,
+      visitCode: game.visitCode,
+      location: game.location,
+      map: game.map,
+    });
+  }
+  if (squad) {
+    requests.push({ kind: 'team_calendar', squad });
+  }
+  if (requests.length === 0) return {};
+
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), SHORT_LINK_TIMEOUT_MS);
+  try {
+    const res = await fetch('/api/links', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ links: requests }),
+      signal: controller.signal,
+    });
+    if (!res.ok) return {};
+
+    const data = (await res.json()) as { links?: { kind?: string; url?: string }[] };
+    const resolved: ShortLinks = {};
+    for (const link of data.links ?? []) {
+      if (!link.url) continue;
+      if (link.kind === 'match_calendar') resolved.match = link.url;
+      if (link.kind === 'team_calendar') resolved.team = link.url;
+    }
+    return resolved;
+  } catch {
+    return {};
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
 function buildWhatsappUrl(
   game: Game,
   clubName: string,
   competition?: CompetitionId,
   clubCode?: number,
+  shortLinks?: ShortLinks,
 ): string {
   let text = '';
 
@@ -162,7 +242,12 @@ function buildWhatsappUrl(
   // keep their current text.
   // The URL goes on its own line because WhatsApp renders it as a tappable
   // chip there; inline it just trails the label.
-  const calendarUrl = club ? buildCalendarUrl(game, club, WEB_APP_BASE_URL) : null;
+  //
+  // The canonical URL decides WHETHER the line exists (it is null for a
+  // pending match); the short link, when the store answered, decides only
+  // WHICH url the line carries.
+  const canonicalMatchUrl = club ? buildCalendarUrl(game, club, WEB_APP_BASE_URL) : null;
+  const calendarUrl = canonicalMatchUrl ? shortLinks?.match ?? canonicalMatchUrl : null;
   if (calendarUrl) {
     text += `\n📅 Añadir al calendario:\n${calendarUrl}`;
   }
@@ -175,9 +260,10 @@ function buildWhatsappUrl(
   //
   // Both links are emitted deliberately: the first is the action for this
   // fixture, the second is the standing reference the player can return to.
-  const teamUrl = club
+  const canonicalTeamUrl = club
     ? buildTeamCalendarUrl(club, squadFor(game, club), WEB_APP_BASE_URL)
     : null;
+  const teamUrl = canonicalTeamUrl ? shortLinks?.team ?? canonicalTeamUrl : null;
   if (teamUrl) {
     // Blank line before the roster AND between the two link blocks, so the
     // two URLs read as distinct actions rather than one run-on paragraph.
@@ -229,18 +315,13 @@ export function MatchesBoard({
   const [filterHydrated, setFilterHydrated] = useState(false);
 
   // Distinct, sorted list of the user's own squads that appear in the
-  // upcoming agenda. Mirrors the server-side alias rule so what we offer
-  // here matches what `getMatchesForClub` already filtered down to.
-  const squadList = useMemo<string[]>(() => {
-    if (!matches) return [];
-    const aliases = clubAliases(clubName);
-    const set = new Set<string>();
-    for (const row of matches) {
-      if (isClubMatch(row.local, aliases) && row.local) set.add(row.local);
-      if (isClubMatch(row.visit, aliases) && row.visit) set.add(row.visit);
-    }
-    return Array.from(set).sort((a, b) => a.localeCompare(b, 'es'));
-  }, [matches, clubName]);
+  // upcoming agenda. `squadsForMatches` is the shared derivation — the same
+  // one the /links page offers as a picker — so what we offer here matches
+  // what `getMatchesForClub` already filtered down to.
+  const squadList = useMemo<string[]>(
+    () => squadsForMatches(matches ?? [], clubName),
+    [matches, clubName],
+  );
 
   // Selected squad names, intersected with the current squad list so a
   // squad that disappeared upstream falls out of the active filter.
@@ -475,7 +556,29 @@ export function MatchesBoard({
                     onClick={(e) => {
                       if (!matchKey) return;
                       e.preventDefault();
-                      window.open(buildWhatsappUrl(row, clubName, competition, clubCode), '_blank');
+
+                      // The tab is opened SYNCHRONOUSLY, on the user
+                      // gesture, because a browser only allows a popup that
+                      // was requested inside the gesture. The short links
+                      // are resolved while the tab sits on about:blank, and
+                      // the tab is pointed at WhatsApp when they arrive (or
+                      // straight away, with the canonical URLs, if they do
+                      // not).
+                      const tab = window.open('about:blank', '_blank');
+                      const openWhatsapp = (url: string) => {
+                        if (tab) {
+                          tab.location.href = url;
+                        }
+                      };
+
+                      void resolveShortLinks(row, clubName, competition, clubCode).then(
+                        (shortLinks) => {
+                          openWhatsapp(
+                            buildWhatsappUrl(row, clubName, competition, clubCode, shortLinks),
+                          );
+                        },
+                      );
+
                       const now = new Date().toISOString();
                       setLocalSent((prev) => ({ ...prev, [matchKey]: now }));
                       fetch('/api/matches/sent', {

@@ -103,7 +103,11 @@ The Calendario page (`/calendario`) renders the three sections (Equipos / Pistas
 | `/login`          | —    | 3-step picker (competition → club → creds); redirects to `/` if already authed |
 | `/`               | ✔    | Welcome screen + current competition           |
 | `/calendario`     | ✔    | Teams / fields / matches                       |
+| `/links`          | ✔    | Short links: create, copy, deactivate          |
 | `/configuracion`  | ✔    | "Pantalla inicial" picker (localStorage)       |
+| `/link/<hash>`    | —    | Public short-link resolver → `302` to the canonical page |
+| `/c/[...]`        | —    | Public single-match landing page               |
+| `/t/<comp>/<code>/<squad>` | — | Public squad calendar page             |
 
 The auth guard lives in `src/app/(app)/layout.tsx` (server component) — it reads the session via `iron-session` and `redirect()`s to `/login` if no club is set.
 
@@ -129,12 +133,18 @@ src/
       configuracion/
         page.tsx
         SettingsForm.tsx
+      links/
+        page.tsx
+        LinkList.tsx
     api/
       auth/
         login/route.ts
         logout/route.ts
         me/route.ts
       competitions/route.ts
+      links/route.ts
+    link/
+      [hash]/route.ts
     login/
       page.tsx
       LoginForm.tsx
@@ -150,8 +160,16 @@ src/
     competitions.ts
     credentials.ts
   lib/
+    calendarEvent.ts           # canonical /c and /t path builders
+    calendarUrl.ts
+    clubTeams.ts               # club/squad name matching
+    shortLink.ts               # hash, short-link paths, canonical target derivation
     session.ts                # iron-session config
     sessionServer.ts          # server-only helpers
+  lib/server/
+    db.ts                     # shared libSQL client + schema bootstrap
+    sentStore.ts              # sent-match store
+    linkStore.ts              # short-link store
   services/
     competition.ts            # getMatchesForClub dispatcher (FMP/FGP)
     fmp.ts                    # FMP upstream fetcher (POST + cheerio)
@@ -181,7 +199,7 @@ The Calendario can remember which matches a club has already shared via WhatsApp
 
 ### Store backends
 
-The store is implemented in `src/lib/server/sentStore.ts` and uses `@libsql/client`, which can talk to either a local SQLite file or a remote Turso/libSQL database depending on the env vars:
+The store is implemented in `src/lib/server/sentStore.ts` and uses `@libsql/client`, which can talk to either a local SQLite file or a remote Turso/libSQL database depending on the env vars. The libSQL client itself (and the env-var fallback chain) lives in `src/lib/server/db.ts`, shared with the short-link store:
 
 | Env var | Local dev | Vercel |
 | ------- | --------- | ------ |
@@ -214,11 +232,30 @@ Local dev writes to the gitignored `data/` directory. Production requires a Turs
    - `SENT_STORE_URL` = the `libsql://…` URL (or use the Vercel Turso integration, which exposes `SENT_STORE_TURSO_DATABASE_URL` — both names are accepted)
    - `SENT_STORE_AUTH_TOKEN` = the generated token (or `SENT_STORE_TURSO_AUTH_TOKEN` if you go through the Vercel Turso integration)
 
-6. Redeploy. The `match_send` table is created automatically on the first request (`CREATE TABLE IF NOT EXISTS`).
+6. Redeploy. The `match_send` and `link` tables are created automatically on the first request (`CREATE TABLE IF NOT EXISTS`).
 
 ### Setting up local development
 
 No extra setup is required. The default config uses `file:./data/sent.sqlite`. If you want a different local path, set `SENT_STORE_URL` in `web-app/.env.local`, e.g. `SENT_STORE_URL=file:/tmp/sent.sqlite` (or set the fallback `SENT_STORE_TURSO_DATABASE_URL` — same effect).
+
+## Short links
+
+The two links the app puts into a WhatsApp convocatoria are long, and they carry their payload in the URL (`/c/<date-time>/<title>/<venue>` inlines the venue and its map URL). The app also owns a short, opaque, revocable name for each of them: `/link/<hash>`.
+
+- **`<hash>`** — 8 random characters from the Crockford base32 alphabet (`0123456789ABCDEFGHJKMNPQRSTVWXYZ`, no `I`/`L`/`O`/`U`). It is random, not derived from the target: the target is drawn from a small public catalogue, so a derived hash would be enumerable by anyone who knows it.
+- **`GET /link/<hash>`** — public, anonymous, read-only. It looks the hash up and answers `302` with the canonical path it points at (`/t/...` or `/c/...`). The canonical pages stay the source of truth; the short link only names one of them. An unknown, malformed or deactivated hash answers `404` with a plain Spanish page.
+- **Privacy** — the resolver logs nothing about the requester (no IP, no user agent) and contacts no third party. It is strictly read-only: resolving a link writes nothing.
+- **Storage** — the `link` table lives in the same database as the sent-match store (same `SENT_STORE_URL` / `SENT_STORE_AUTH_TOKEN` vars, same local `data/sent.sqlite`). One row per club, per kind, per target, scoped by `club_code` + `competition`.
+- **Idempotency** — asking twice for the same target returns the same hash and refreshes the stored parameters, so a corrected kickoff keeps the URL already pasted in the WhatsApp group. The kickoff time is deliberately not part of a target's identity; the fixture's date is.
+- **Revocation** — a club deactivates a link from the **Links** page (`/links`) or via `PATCH /api/links`. A deactivated link is never handed out again: creating that target again mints a new hash, so a killed URL stays dead. Re-activating a link hands the target back to it.
+- **Deactivation is not instant** — the redirect is cached for up to **5 minutes** (`Cache-Control: public, max-age=300`), so a deactivated link can keep resolving until that cache expires. The Links page says so next to the button.
+- **API** — `GET` / `POST` / `PATCH /api/links`. All of them require the iron-session club and take it from `session.club`, never from the body. `POST` accepts a batch (`{ "links": [...] }`) so the Enviar flow needs one round trip for both kinds.
+
+### The Enviar flow
+
+When a club shares a match, the app asks the store for the two short links and puts them in the message. The request is capped at 2.5 s: if the store cannot be reached, times out or answers badly, the message is composed with the canonical `/c/...` and `/t/...` URLs instead and the conversation opens anyway. A failure in the link store never blocks a share.
+
+The canonical URLs are unchanged by any of this — links already sent in a WhatsApp group keep working, and the app never depends on the store to render a page.
 
 ## Deploy
 

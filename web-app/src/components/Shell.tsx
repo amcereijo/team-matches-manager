@@ -9,6 +9,7 @@ import styles from './Shell.module.css';
 const NAV = [
   { href: '/', label: 'Inicio', icon: '🏠' },
   { href: '/calendario', label: 'Calendario', icon: '📅' },
+  { href: '/links', label: 'Links', icon: '🔗' },
   { href: '/configuracion', label: 'Configuración', icon: '⚙️' },
 ];
 

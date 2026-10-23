@@ -1,51 +1,21 @@
-import fs from 'fs';
-import path from 'path';
-import { createClient, type Client } from '@libsql/client';
+import type { Client } from '@libsql/client';
 import type { CompetitionId } from '@/constants/competitions';
 import type { ClubType, Game } from '@/types';
+import { ensureSentStoreSchema, getClient } from '@/lib/server/db';
 
 const COMPETITION_VALUES: CompetitionId[] = ['FMP', 'FGP'];
 
-function getClientConfig(): { url: string; authToken?: string } {
-  const url =
-    process.env.SENT_STORE_URL ??
-    process.env.SENT_STORE_TURSO_DATABASE_URL ??
-    'file:./data/sent.sqlite';
-  const authToken =
-    process.env.SENT_STORE_AUTH_TOKEN ?? process.env.SENT_STORE_TURSO_AUTH_TOKEN;
-  return { url, authToken };
-}
-
-let clientInstance: Client | null = null;
-
-async function getClient(): Promise<Client> {
-  if (!clientInstance) {
-    const { url, authToken } = getClientConfig();
-
-    if (url.startsWith('file:')) {
-      const filePath = url.slice('file:'.length);
-      const dir = path.dirname(filePath);
-      if (dir && dir !== '.' && !fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
-    }
-
-    clientInstance = createClient({ url, authToken });
-    await clientInstance.execute(`
-      CREATE TABLE IF NOT EXISTS match_send (
-        club_code INTEGER NOT NULL,
-        competition TEXT NOT NULL,
-        match_key TEXT NOT NULL,
-        sent_at TEXT NOT NULL,
-        UNIQUE (club_code, competition, match_key)
-      )
-    `);
-    await clientInstance.execute(`
-      CREATE INDEX IF NOT EXISTS idx_match_send_club_competition
-        ON match_send (club_code, competition)
-    `);
-  }
-  return clientInstance;
+/**
+ * The store's client, with its schema guaranteed to exist.
+ *
+ * The client itself and the env-var fallback chain live in `@/lib/server/db`
+ * so the short-link store shares them; the schema bootstrap stays here
+ * because the table is this store's own.
+ */
+async function getStore(): Promise<Client> {
+  const client = await getClient();
+  await ensureSentStoreSchema(client);
+  return client;
 }
 
 function parseCompetitionFromKey(matchKey: string): CompetitionId | null {
@@ -92,7 +62,7 @@ function matchKeyIsReady(matchKey: string): boolean {
 }
 
 export async function getSentForClub(club: ClubType): Promise<Record<string, string>> {
-  const client = await getClient();
+  const client = await getStore();
   const result = await client.execute({
     sql: 'SELECT match_key, sent_at FROM match_send WHERE club_code = ? AND competition = ?',
     args: [club.code, club.competition],
@@ -115,7 +85,7 @@ export async function markSent(club: ClubType, matchKey: string): Promise<{ sent
     throw new Error('Match is not ready');
   }
 
-  const client = await getClient();
+  const client = await getStore();
   const sentAt = new Date().toISOString();
 
   await client.execute({
