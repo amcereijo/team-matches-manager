@@ -126,7 +126,8 @@
 }
 
 .badgeActive,
-.badgeInactive {
+.badgeInactive,
+.badgeExpired {
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
@@ -146,6 +147,14 @@
   color: var(--text-subtle);
   background: rgba(100, 116, 139, 0.12);
   border-color: rgba(100, 116, 139, 0.3);
+}
+
+/* A match link whose fixture is over: dead, but not something the club
+   killed — the calendar says so, not the club. */
+.badgeExpired {
+  color: #b45309;
+  background: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.3);
 }
 
 .url {

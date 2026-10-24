@@ -127,7 +127,8 @@ export function LinkList({
           <h1 className={styles.pageTitle}>Enlaces cortos</h1>
           <p className={styles.pageSubtitle}>
             Direcciones cortas y revocables para compartir con el equipo. Se guardan
-            en esta cuenta y puedes desactivarlas cuando quieras.
+            en esta cuenta y puedes desactivarlas cuando quieras. Los enlaces de
+            partido caducan el día después del partido.
           </p>
         </div>
       </header>
@@ -193,70 +194,90 @@ export function LinkList({
         </div>
       ) : (
         <ul className={styles.list}>
-          {links.map((link) => (
-            <li
-              key={link.hash}
-              className={`${styles.item} ${link.active ? '' : styles.itemInactive}`}
-            >
-              <div className={styles.itemHead}>
-                <span className={styles.itemTitle}>{link.description}</span>
-                <span
-                  className={link.active ? styles.badgeActive : styles.badgeInactive}
-                >
-                  {link.active ? 'Activo' : 'Desactivado'}
-                </span>
-              </div>
+          {links.map((link) => {
+            // An expired match link cannot be opened any more, whatever the
+            // stored state says: the fixture's day is over. It is neither
+            // active nor something the club deactivated, so it gets its own
+            // state — and no re-activation, because there is nothing to bring
+            // back to life.
+            const expired = link.expired;
+            const active = link.active && !expired;
 
-              <code className={styles.url}>{link.url}</code>
+            return (
+              <li
+                key={link.hash}
+                className={`${styles.item} ${active ? '' : styles.itemInactive}`}
+              >
+                <div className={styles.itemHead}>
+                  <span className={styles.itemTitle}>{link.description}</span>
+                  <span
+                    className={
+                      expired
+                        ? styles.badgeExpired
+                        : active
+                          ? styles.badgeActive
+                          : styles.badgeInactive
+                    }
+                  >
+                    {expired ? 'Expirado' : active ? 'Activo' : 'Desactivado'}
+                  </span>
+                </div>
 
-              {link.target && <p className={styles.target}>Apunta a {link.target}</p>}
+                <code className={styles.url}>{link.url}</code>
 
-              <p className={styles.meta}>
-                Creado el {formatTimestamp(link.createdAt)} · actualizado el{' '}
-                {formatTimestamp(link.updatedAt)}
-              </p>
+                {link.target && <p className={styles.target}>Apunta a {link.target}</p>}
 
-              <div className={styles.actions}>
-                <button
-                  type="button"
-                  className={styles.secondaryButton}
-                  onClick={() => copyLink(link)}
-                >
-                  <span aria-hidden>📋</span>
-                  <span>{copiedHash === link.hash ? 'Copiado' : 'Copiar'}</span>
-                </button>
+                <p className={styles.meta}>
+                  Creado el {formatTimestamp(link.createdAt)} · actualizado el{' '}
+                  {formatTimestamp(link.updatedAt)}
+                </p>
 
-                {link.active ? (
+                <div className={styles.actions}>
                   <button
                     type="button"
                     className={styles.secondaryButton}
-                    disabled={busyHash === link.hash}
-                    onClick={() => setActive(link, false)}
+                    onClick={() => copyLink(link)}
                   >
-                    <span aria-hidden>🚫</span>
-                    <span>Desactivar</span>
+                    <span aria-hidden>📋</span>
+                    <span>{copiedHash === link.hash ? 'Copiado' : 'Copiar'}</span>
                   </button>
-                ) : (
-                  <button
-                    type="button"
-                    className={styles.secondaryButton}
-                    disabled={busyHash === link.hash}
-                    onClick={() => setActive(link, true)}
-                  >
-                    <span aria-hidden>✅</span>
-                    <span>Reactivar</span>
-                  </button>
-                )}
-              </div>
-            </li>
-          ))}
+
+                  {active ? (
+                    <button
+                      type="button"
+                      className={styles.secondaryButton}
+                      disabled={busyHash === link.hash}
+                      onClick={() => setActive(link, false)}
+                    >
+                      <span aria-hidden>🚫</span>
+                      <span>Desactivar</span>
+                    </button>
+                  ) : (
+                    !expired && (
+                      <button
+                        type="button"
+                        className={styles.secondaryButton}
+                        disabled={busyHash === link.hash}
+                        onClick={() => setActive(link, true)}
+                      >
+                        <span aria-hidden>✅</span>
+                        <span>Reactivar</span>
+                      </button>
+                    )
+                  )}
+                </div>
+              </li>
+            );
+          })}
         </ul>
       )}
 
       <p className={styles.footnote}>
-        Un enlace desactivado puede seguir funcionando hasta 5 minutos, porque las
-        páginas y las redirecciones se guardan en caché. Pasado ese plazo, deja de
-        abrirse.
+        Un enlace de partido deja de funcionar cuando termina el día del
+        partido: ese mismo día sigue siendo válido, y al día siguiente ya no.
+        Un enlace desactivado puede seguir funcionando hasta 5 minutos, porque
+        las páginas y las redirecciones se guardan en caché. Pasado ese plazo,
+        deja de abrirse.
       </p>
     </div>
   );

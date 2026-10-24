@@ -4,6 +4,7 @@ import type { CompetitionId } from '@/constants/competitions';
 import { getClient } from '@/lib/server/db';
 import {
   generateHash,
+  isLinkExpired,
   normalizeHash,
   payloadFor,
   targetKeyFor,
@@ -135,25 +136,31 @@ async function getStore(): Promise<Client> {
   return client;
 }
 
-function rowToLink(row: Record<string, unknown>): StoredLink {
-  let payload: LinkPayload = {};
+/**
+ * Read a row's payload.
+ *
+ * A row with an unreadable payload still resolves to *something*; the
+ * canonical path derivation treats a missing field as "cannot derive",
+ * which the resolver turns into the not-available page.
+ */
+function parsePayload(raw: unknown): LinkPayload {
   try {
-    const parsed = JSON.parse(String(row.payload));
-    if (parsed && typeof parsed === 'object') payload = parsed as LinkPayload;
+    const parsed = JSON.parse(String(raw));
+    if (parsed && typeof parsed === 'object') return parsed as LinkPayload;
   } catch {
-    // A row with an unreadable payload still resolves to *something*; the
-    // canonical path derivation treats a missing field as "cannot derive",
-    // which the resolver turns into the not-available page.
-    payload = {};
+    // Fall through to the empty payload.
   }
+  return {};
+}
 
+function rowToLink(row: Record<string, unknown>): StoredLink {
   return {
     hash: String(row.hash),
     clubCode: Number(row.club_code),
     competition: String(row.competition) as CompetitionId,
     kind: String(row.kind) as LinkKind,
     targetKey: String(row.target_key),
-    payload,
+    payload: parsePayload(row.payload),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
     disabledAt: row.disabled_at === null || row.disabled_at === undefined
@@ -196,6 +203,8 @@ async function findActiveByTarget(
  *
  * A deactivated link is NOT reused: creating the target again mints a NEW
  * hash, so a URL the club deliberately killed does not come back to life.
+ * The same holds for a link whose fixture is over — it is stood down first,
+ * and the target gets a new hash.
  */
 export async function createOrReuseLink(
   club: ClubType,
@@ -205,7 +214,19 @@ export async function createOrReuseLink(
   const client = await getStore();
   const targetKey = targetKeyFor(club, kind, request);
   const payload = payloadFor(club, kind, request);
-  const existing = await findActiveByTarget(club, kind, targetKey);
+  let existing = await findActiveByTarget(club, kind, targetKey);
+
+  // A link whose fixture is over is not handed out again: it cannot be
+  // opened, and the club is owed a URL that works. Stand it down and mint a
+  // new hash for the target.
+  if (existing && isLinkExpired(kind, existing.payload)) {
+    const now = new Date().toISOString();
+    await client.execute({
+      sql: 'UPDATE link SET disabled_at = ?, updated_at = ? WHERE hash = ?',
+      args: [now, now, existing.hash],
+    });
+    existing = null;
+  }
 
   if (existing) {
     const updatedAt = new Date().toISOString();
@@ -293,23 +314,83 @@ export async function listLinksForClub(club: ClubType): Promise<StoredLink[]> {
 }
 
 /**
- * Deactivate or re-activate one of the club's links.
+ * Stand down the club's match links whose fixture is over.
  *
- * Returns false when the hash is unknown OR belongs to another club: the
- * caller must not be able to tell those apart either.
+ * A match link is good for the whole of its fixture's day and stops working
+ * once that day is over. The resolver already refuses those links, so this
+ * sweep is not what makes the rule true — it is what keeps the club's own
+ * list and the store's "at most one ACTIVE link per target" rule truthful.
+ *
+ * Scoped to the calling club: per-club isolation is an invariant of this
+ * store, and a club's request must not write to another club's rows.
+ *
+ * The links are DEACTIVATED, not deleted. The row survives, so the club can
+ * still see what it shared — and, because a deactivated link is never handed
+ * out again, creating that target afterwards mints a new hash.
+ *
+ * Returns the hashes it stood down.
+ */
+export async function expireStaleMatchLinks(club: ClubType): Promise<string[]> {
+  const client = await getStore();
+
+  const result = await client.execute({
+    sql: `SELECT hash, payload FROM link
+          WHERE club_code = ? AND competition = ? AND kind = 'match_calendar'
+            AND disabled_at IS NULL`,
+    args: [club.code, club.competition],
+  });
+
+  const stale = result.rows
+    .map((row) => ({
+      hash: String(row.hash),
+      payload: parsePayload(row.payload),
+    }))
+    .filter((row) => isLinkExpired('match_calendar', row.payload))
+    .map((row) => row.hash);
+
+  if (stale.length === 0) return [];
+
+  const now = new Date().toISOString();
+  await client.execute({
+    sql: `UPDATE link
+          SET disabled_at = ?, updated_at = ?
+          WHERE hash IN (${stale.map(() => '?').join(', ')}) AND disabled_at IS NULL`,
+    args: [now, now, ...stale],
+  });
+
+  return stale;
+}
+
+/**
+ * Why a link's state could not be changed.
+ *
+ * `not_found` covers both an unknown hash and one owned by another club:
+ * the caller must not be able to tell those apart either. `expired` is a
+ * different answer — the club DOES own that link, and it cannot be brought
+ * back to life because its fixture is over.
+ */
+export type LinkStateChange =
+  | { ok: true }
+  | { ok: false; reason: 'not_found' | 'expired' };
+
+/**
+ * Deactivate or re-activate one of the club's links.
  *
  * Re-activating stands the other links for the same target down first. A
  * target has at most one ACTIVE link, so re-activating an old link hands the
  * target back to it — which is what the club asked for by clicking on that
  * link, and what keeps the one-active-link rule true.
+ *
+ * A match link whose fixture is over cannot be re-activated: it would hand
+ * the club back a link that cannot resolve.
  */
 export async function setLinkActive(
   club: ClubType,
   hash: string,
   active: boolean,
-): Promise<boolean> {
+): Promise<LinkStateChange> {
   const normalized = normalizeHash(hash);
-  if (!normalized) return false;
+  if (!normalized) return { ok: false, reason: 'not_found' };
 
   const client = await getStore();
   const now = new Date().toISOString();
@@ -321,10 +402,18 @@ export async function setLinkActive(
     args: [normalized, club.code, club.competition],
   });
   const row = owned.rows[0];
-  if (!row) return false;
+  if (!row) return { ok: false, reason: 'not_found' };
+
+  const target = rowToLink(row as Record<string, unknown>);
+
+  // A link for a fixture that is over cannot come back to life: it would
+  // be a link the club cannot open. The club owns it, so this is a
+  // different answer from "no such link".
+  if (active && isLinkExpired(target.kind, target.payload)) {
+    return { ok: false, reason: 'expired' };
+  }
 
   if (active) {
-    const target = rowToLink(row as Record<string, unknown>);
     await client.execute({
       sql: `UPDATE link
             SET disabled_at = ?, updated_at = ?
@@ -351,7 +440,7 @@ export async function setLinkActive(
 
   // `rowsAffected` is 0 when the row does not exist, is owned by another
   // club, or was already in the requested state.
-  return result.rowsAffected > 0;
+  return result.rowsAffected > 0 ? { ok: true } : { ok: false, reason: 'not_found' };
 }
 
 /**
@@ -359,7 +448,9 @@ export async function setLinkActive(
  *
  * Returns null for a malformed, unknown or deactivated hash — the three
  * cases the public route answers with the same not-available page, so a
- * stranger cannot probe which hashes exist.
+ * stranger cannot probe which hashes exist. A match link whose fixture is
+ * over is a fourth case with the same answer: the link is simply not
+ * available any more.
  *
  * STRICTLY READ-ONLY: no row is written here. The resolver is on a public,
  * cacheable path and must not mutate server state.
@@ -382,6 +473,11 @@ export async function resolveLink(hash: string): Promise<StoredLink | null> {
 
   const link = rowToLink(row as Record<string, unknown>);
   if (link.disabledAt) return null;
+
+  // A match link is good for the whole of its fixture's day and no longer.
+  // The resolver is what makes that true — the store's sweep only keeps the
+  // club's list tidy, and a club that never shares again would never run it.
+  if (isLinkExpired(link.kind, link.payload)) return null;
 
   return link;
 }

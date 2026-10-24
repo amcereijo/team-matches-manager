@@ -105,7 +105,7 @@ The Calendario page (`/calendario`) renders the three sections (Equipos / Pistas
 | `/login`          | —    | 3-step picker (competition → club → creds); redirects to `/` if already authed |
 | `/`               | ✔    | Welcome screen + current competition           |
 | `/calendario`     | ✔    | Teams / fields / matches                       |
-| `/links`          | ✔    | Short links: create, copy, deactivate          |
+| `/links`          | ✔    | Short links: create, copy, deactivate, expiry  |
 | `/configuracion`  | ✔    | "Pantalla inicial" picker (localStorage)       |
 | `/link/<hash>`    | —    | Public short-link resolver → `302` to the canonical page |
 | `/c/[...]`        | —    | Public single-match landing page               |
@@ -245,13 +245,15 @@ No extra setup is required. The default config uses `file:./data/sent.sqlite`. I
 The two links the app puts into a WhatsApp convocatoria are long, and they carry their payload in the URL (`/c/<date-time>/<title>/<venue>` inlines the venue and its map URL). The app also owns a short, opaque, revocable name for each of them: `/link/<hash>`.
 
 - **`<hash>`** — 8 random characters from the Crockford base32 alphabet (`0123456789ABCDEFGHJKMNPQRSTVWXYZ`, no `I`/`L`/`O`/`U`). It is random, not derived from the target: the target is drawn from a small public catalogue, so a derived hash would be enumerable by anyone who knows it.
-- **`GET /link/<hash>`** — public, anonymous, read-only. It looks the hash up and answers `302` with the canonical path it points at (`/t/...` or `/c/...`). The canonical pages stay the source of truth; the short link only names one of them. An unknown, malformed or deactivated hash answers `404` with a plain Spanish page.
+- **`GET /link/<hash>`** — public, anonymous, read-only. It looks the hash up and answers `302` with the canonical path it points at (`/t/...` or `/c/...`). The canonical pages stay the source of truth; the short link only names one of them. An unknown, malformed or deactivated hash answers `404` with a plain Spanish page — and so does a match link whose fixture date is over.
 - **Privacy** — the resolver logs nothing about the requester (no IP, no user agent) and contacts no third party. It is strictly read-only: resolving a link writes nothing.
 - **Storage** — the `link` table lives in the same database as the sent-match store (same `SENT_STORE_URL` / `SENT_STORE_AUTH_TOKEN` vars, same local `data/sent.sqlite`). One row per club, per kind, per target, scoped by `club_code` + `competition`.
 - **Idempotency** — asking twice for the same target returns the same hash and refreshes the stored parameters, so a corrected kickoff keeps the URL already pasted in the WhatsApp group. The kickoff time is deliberately not part of a target's identity; the fixture's date is.
-- **Revocation** — a club deactivates a link from the **Links** page (`/links`) or via `PATCH /api/links`. A deactivated link is never handed out again: creating that target again mints a new hash, so a killed URL stays dead. Re-activating a link hands the target back to it.
-- **Deactivation is not instant** — the redirect is cached for up to **5 minutes** (`Cache-Control: public, max-age=300`), so a deactivated link can keep resolving until that cache expires. The Links page says so next to the button.
-- **API** — `GET` / `POST` / `PATCH /api/links`. All of them require the iron-session club and take it from `session.club`, never from the body. `POST` accepts a batch (`{ "links": [...] }`) so the Enviar flow needs one round trip for both kinds.
+- **Expiry** — a match link is good for the whole of its fixture's day and stops working once that day is over. The comparison is a calendar-day one in `Europe/Madrid`, so a match played today is still shareable tonight; tomorrow it is gone. The rule is enforced by the resolver itself, so it holds for every link in the store. A team-calendar link names a squad rather than a fixture and never expires.
+- **Cleanup on create** — creating a link first stands down the requesting club's expired match links, so the club's own list stays truthful and the store's one-active-link-per-target rule holds. The sweep is scoped to that club; the expiry itself does not depend on it. A swept link is never handed out again — creating that target mints a new hash.
+- **Revocation** — a club deactivates a link from the **Links** page (`/links`) or via `PATCH /api/links`. A deactivated link is never handed out again: creating that target again mints a new hash, so a killed URL stays dead. Re-activating a link hands the target back to it — except for a match link whose date is over, which cannot be brought back to life (`409`).
+- **Deactivation is not instant** — the redirect is cached for up to **5 minutes** (`Cache-Control: public, max-age=300`), so a deactivated link can keep resolving until that cache expires. The same window applies at the day boundary. The Links page says so next to the button.
+- **API** — `GET` / `POST` / `PATCH /api/links`. All of them require the iron-session club and take it from `session.club`, never from the body. `POST` accepts a batch (`{ "links": [...] }`) so the Enviar flow needs one round trip for both kinds. A match link for a date that is already past is refused (`400`), and re-activating an expired one is refused (`409`) — a different answer from the `404` given for a link that does not exist.
 
 ### The Enviar flow
 

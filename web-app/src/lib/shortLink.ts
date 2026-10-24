@@ -6,6 +6,7 @@ import {
   locationText,
   opponentFor,
 } from '@/lib/calendarEvent';
+import { nowInMadrid, parseSidgadDate } from '@/lib/matchDate';
 
 // The domain rules for app-owned short links.
 //
@@ -260,6 +261,77 @@ export function describeLink(kind: LinkKind, payload: LinkPayload): string {
 }
 
 /**
+ * The calendar day a date falls on, as a number two days can be compared by.
+ *
+ * `parseSidgadDate` and `nowInMadrid` both encode the Europe/Madrid
+ * wall-clock components in the Date's UTC slots, so the UTC fields of the
+ * result ARE the Madrid year/month/day. Dropping the time and rebuilding the
+ * date in UTC gives a key that orders days the way a calendar does, and that
+ * ignores both the hour of the day and any DST shift.
+ */
+function dayKey(date: Date): number {
+  return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+}
+
+/**
+ * The day a `dd/mm/yyyy` date falls on, or null when it cannot be read.
+ *
+ * `parseSidgadDate` trusts the numbers it is handed: '10/24/2026' reads as
+ * the 24th month of 2026 and rolls over into the next year, and '31/02/2026'
+ * reads as the 3rd of March. The parts are therefore checked against what
+ * the parsed Date actually holds, so a day key always points at the day the
+ * string names — and a string that names no real day yields no key at all.
+ */
+export function matchDayKey(date?: string | null): number | null {
+  const parsed = parseSidgadDate(date ?? null, null);
+  if (!parsed) return null;
+
+  const [rawDay, rawMonth, rawYear] = (date ?? '').split('/');
+  if (
+    Number.parseInt(rawDay ?? '', 10) !== parsed.getUTCDate() ||
+    Number.parseInt(rawMonth ?? '', 10) !== parsed.getUTCMonth() + 1 ||
+    Number.parseInt(rawYear ?? '', 10) !== parsed.getUTCFullYear()
+  ) {
+    return null;
+  }
+
+  return dayKey(parsed);
+}
+
+/** Today in Madrid, as a day key — the other half of `matchDayKey`. */
+export function todayDayKey(now: Date = nowInMadrid()): number {
+  return dayKey(now);
+}
+
+/**
+ * Is this link past the last day it could still be useful?
+ *
+ * A match link is good for the WHOLE of its fixture's day — before the
+ * kickoff and after it — and stops working once that day is over. The
+ * comparison is therefore day-granular: a link to a match played at 21:00 is
+ * still shareable at 23:00, and a link to a match played today is dead
+ * tomorrow.
+ *
+ * A team-calendar link never expires. It names a squad rather than a
+ * fixture, so there is no date for it to expire on.
+ *
+ * A match link whose date cannot be read counts as expired: "not provably
+ * still current" must not read as "still current".
+ */
+export function isLinkExpired(
+  kind: LinkKind,
+  payload: LinkPayload,
+  now: Date = nowInMadrid(),
+): boolean {
+  if (kind !== 'match_calendar') return false;
+
+  const matchDay = matchDayKey(payload.date);
+  if (matchDay === null) return true;
+
+  return matchDay < dayKey(now);
+}
+
+/**
  * A link as the UI and the API see it.
  *
  * Deliberately a flat, serialisable shape: the same view is produced by the
@@ -276,6 +348,8 @@ export type LinkView = {
   createdAt: string;
   updatedAt: string;
   active: boolean;
+  /** The fixture's day is over: the link can no longer be opened. */
+  expired: boolean;
 };
 
 /** The shape a stored link must have to be viewed. */
@@ -306,5 +380,6 @@ export function linkView(link: LinkRecord, baseUrl: string): LinkView {
     createdAt: link.createdAt,
     updatedAt: link.updatedAt,
     active: link.disabledAt === null,
+    expired: isLinkExpired(link.kind, link.payload),
   };
 }

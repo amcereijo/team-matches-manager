@@ -2,11 +2,14 @@ import { NextResponse } from 'next/server';
 import { getCurrentClub } from '@/lib/sessionServer';
 import {
   createOrReuseLink,
+  expireStaleMatchLinks,
   listLinksForClub,
   setLinkActive,
 } from '@/lib/server/linkStore';
 import {
   linkView,
+  matchDayKey,
+  todayDayKey,
   type LinkKind,
   type LinkRequest,
   type LinkView,
@@ -22,6 +25,9 @@ import {
 // feature; everything here is behind the session.
 
 const LINK_KINDS: LinkKind[] = ['team_calendar', 'match_calendar'];
+
+const INVALID_REQUEST =
+  'Invalid link request: kind, and the fields it needs, are required';
 
 /**
  * The public origin of the app.
@@ -41,29 +47,60 @@ function resolveBaseUrl(request: Request): string {
   }
 }
 
-function parseLinkRequest(raw: unknown): LinkRequest | null {
-  if (!raw || typeof raw !== 'object') return null;
+/**
+ * What a create request asked for, or why it could not be honoured.
+ *
+ * The reason travels back to the caller: a link for a fixture that is over
+ * is a different mistake from a request that is missing its fields, and the
+ * two deserve different answers.
+ */
+type ParsedLinkRequest =
+  | { ok: true; request: LinkRequest }
+  | { ok: false; error: string };
+
+function parseLinkRequest(raw: unknown): ParsedLinkRequest {
+  if (!raw || typeof raw !== 'object') {
+    return { ok: false, error: INVALID_REQUEST };
+  }
   const body = raw as Record<string, unknown>;
 
   const kind = body.kind;
-  if (typeof kind !== 'string' || !LINK_KINDS.includes(kind as LinkKind)) return null;
+  if (typeof kind !== 'string' || !LINK_KINDS.includes(kind as LinkKind)) {
+    return { ok: false, error: INVALID_REQUEST };
+  }
 
   if (kind === 'team_calendar') {
     const squad = typeof body.squad === 'string' ? body.squad.trim() : '';
-    if (!squad) return null;
+    if (!squad) return { ok: false, error: INVALID_REQUEST };
     // The league is part of the squad's identity: the same team name exists
     // in several leagues, and only the pair names one team. It is optional so
     // a hand-typed squad without a league still resolves (to an empty
     // calendar, never an error).
     const league = typeof body.league === 'string' ? body.league.trim() : '';
-    return { kind: 'team_calendar', squad, league: league || null };
+    return {
+      ok: true,
+      request: { kind: 'team_calendar', squad, league: league || null },
+    };
   }
 
   const date = typeof body.date === 'string' ? body.date.trim() : '';
   const time = typeof body.time === 'string' ? body.time.trim() : '';
   const local = typeof body.local === 'string' ? body.local.trim() : '';
   const visit = typeof body.visit === 'string' ? body.visit.trim() : '';
-  if (!date || !time || !local || !visit) return null;
+  if (!date || !time || !local || !visit) {
+    return { ok: false, error: INVALID_REQUEST };
+  }
+
+  // A match link is good for the whole of its fixture's day and no longer.
+  // A link for a day that is already over would be dead the moment it
+  // existed, so it is refused rather than stored.
+  const day = matchDayKey(date);
+  if (day === null) {
+    return { ok: false, error: 'The fixture date could not be read' };
+  }
+  if (day < todayDayKey()) {
+    return { ok: false, error: 'The fixture date is already in the past' };
+  }
 
   const location = typeof body.location === 'string' ? body.location : null;
   const map = typeof body.map === 'string' ? body.map : null;
@@ -71,15 +108,18 @@ function parseLinkRequest(raw: unknown): LinkRequest | null {
   const visitCode = typeof body.visitCode === 'number' ? body.visitCode : null;
 
   return {
-    kind: 'match_calendar',
-    date,
-    time,
-    local,
-    visit,
-    localCode,
-    visitCode,
-    location,
-    map,
+    ok: true,
+    request: {
+      kind: 'match_calendar',
+      date,
+      time,
+      local,
+      visit,
+      localCode,
+      visitCode,
+      location,
+      map,
+    },
   };
 }
 
@@ -127,13 +167,10 @@ export async function POST(request: Request) {
   const requests: LinkRequest[] = [];
   for (const raw of rawItems) {
     const parsed = parseLinkRequest(raw);
-    if (!parsed) {
-      return NextResponse.json(
-        { error: 'Invalid link request: kind, and the fields it needs, are required' },
-        { status: 400 },
-      );
+    if (!parsed.ok) {
+      return NextResponse.json({ error: parsed.error }, { status: 400 });
     }
-    requests.push(parsed);
+    requests.push(parsed.request);
   }
 
   // NOTE: the request body may carry a `clubCode`/`competition` field. It is
@@ -141,6 +178,14 @@ export async function POST(request: Request) {
 
   const baseUrl = resolveBaseUrl(request);
   const links: LinkView[] = [];
+
+  // Clean up the links that should no longer be valid before adding new
+  // ones: a match link stops working once its fixture's day is over, and
+  // standing those down keeps the club's own list truthful and frees the
+  // store's one-active-link-per-target slot. The sweep only touches this
+  // club's links, and the expiry itself is enforced by the resolver — this
+  // is hygiene, not the rule.
+  await expireStaleMatchLinks(club);
 
   for (const linkRequest of requests) {
     const link = await createOrReuseLink(club, linkRequest.kind, linkRequest);
@@ -176,7 +221,16 @@ export async function PATCH(request: Request) {
   }
 
   const updated = await setLinkActive(club, hash, active);
-  if (!updated) {
+  if (!updated.ok) {
+    if (updated.reason === 'expired') {
+      // The club DOES own this link — it cannot be brought back to life
+      // because its fixture is over. That is a different answer from "no
+      // such link", and the club is told which one it got.
+      return NextResponse.json(
+        { error: 'This link has expired: the fixture date is already in the past' },
+        { status: 409 },
+      );
+    }
     // Refused. The caller cannot tell "no such link" from "not yours", and
     // neither is a link the requesting club may touch.
     return NextResponse.json({ error: 'Link not found' }, { status: 404 });
