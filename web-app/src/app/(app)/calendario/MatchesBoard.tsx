@@ -2,10 +2,15 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import type { CompetitionId } from '@/constants/competitions';
-import type { ClubType, Game } from '@/types';
+import type { ClubType, Game, Squad } from '@/types';
 import { buildCalendarUrl, buildTeamCalendarUrl } from '@/lib/calendarUrl';
 import { squadFor } from '@/lib/calendarEvent';
-import { squadsForMatches } from '@/lib/clubTeams';
+import {
+  ambiguousSquadNames,
+  squadsForMatches,
+  squadKey,
+  squadLabel,
+} from '@/lib/clubTeams';
 import { deriveMatchKey } from '@/lib/matchKey';
 import { nowInMadrid, parseSidgadDate } from '@/lib/matchDate';
 import { getItem, setItem } from '@/services/storage';
@@ -143,7 +148,13 @@ async function resolveShortLinks(
 ): Promise<ShortLinks> {
   if (competition === undefined || clubCode === undefined) return {};
 
-  const club: ClubType = { competition, code: clubCode, name: clubName, username: '' };
+  const club: ClubType = {
+    competition,
+    code: clubCode,
+    name: clubName,
+    username: '',
+  };
+
   const squad = squadFor(game, club);
 
   const requests: Record<string, unknown>[] = [];
@@ -161,7 +172,10 @@ async function resolveShortLinks(
     });
   }
   if (squad) {
-    requests.push({ kind: 'team_calendar', squad });
+    // The league travels with the squad: the same team name exists in
+    // several leagues, and the calendar link must point at the team of THIS
+    // fixture, not at every team that happens to share the name.
+    requests.push({ kind: 'team_calendar', squad: squad.name, league: squad.league });
   }
   if (requests.length === 0) return {};
 
@@ -320,23 +334,52 @@ export function MatchesBoard({
 }) {
   const [today, setToday] = useState<Date | null>(null);
   const [localSent, setLocalSent] = useState<Record<string, string>>(initialSent);
+  // The selected squads, stored as squad keys (league + name), not as bare
+  // names: the same team name exists in several leagues, and a selection of
+  // "DOMINICOS A" must say WHICH one.
   const [selectedSquads, setSelectedSquads] = useState<string[]>([]);
   const [filterHydrated, setFilterHydrated] = useState(false);
+
+  const club: ClubType = useMemo(
+    () => ({
+      competition: competition ?? 'FMP',
+      code: clubCode ?? -1,
+      name: clubName,
+      username: '',
+    }),
+    [clubName, competition, clubCode],
+  );
 
   // Distinct, sorted list of the user's own squads that appear in the
   // upcoming agenda. `squadsForMatches` is the shared derivation — the same
   // one the /links page offers as a picker — so what we offer here matches
   // what `getMatchesForClub` already filtered down to.
-  const squadList = useMemo<string[]>(
-    () => squadsForMatches(matches ?? [], clubName),
-    [matches, clubName],
+  //
+  // The derivation uses the upstream club code first and the club's name
+  // aliases as a fallback, exactly like the agenda filter does. A name-only
+  // derivation found NO squads at all for most clubs — the federation prints
+  // `DOMINICOS A` where the catalogue says `CLUB AA DOMINICOS` — and the
+  // filter dropdown then never appeared.
+  const squadList = useMemo<Squad[]>(
+    () => squadsForMatches(matches ?? [], club),
+    [matches, club],
   );
 
-  // Selected squad names, intersected with the current squad list so a
+  // Squad keys, used to decide whether a stored selection still applies.
+  const availableKeys = useMemo(
+    () => new Set(squadList.map(squadKey)),
+    [squadList],
+  );
+
+  // The team names that more than one league uses. Only those need the league
+  // spelled out in the dropdown.
+  const ambiguousNames = useMemo(() => ambiguousSquadNames(squadList), [squadList]);
+
+  // Selected squads, intersected with the current squad list so a
   // squad that disappeared upstream falls out of the active filter.
   const activeSelection = useMemo(
-    () => selectedSquads.filter((s) => squadList.includes(s)),
-    [selectedSquads, squadList],
+    () => selectedSquads.filter((key) => availableKeys.has(key)),
+    [selectedSquads, availableKeys],
   );
 
   // Filtered list shown to the user. An empty selection is equivalent to
@@ -346,7 +389,9 @@ export function MatchesBoard({
     if (activeSelection.length === 0) return matches;
     const selected = new Set(activeSelection);
     return matches.filter(
-      (m) => (m.local && selected.has(m.local)) || (m.visit && selected.has(m.visit)),
+      (m) =>
+        (m.local && selected.has(squadKey({ name: m.local, league: m.league }))) ||
+        (m.visit && selected.has(squadKey({ name: m.visit, league: m.league }))),
     );
   }, [matches, activeSelection]);
 
@@ -361,10 +406,21 @@ export function MatchesBoard({
     return () => document.removeEventListener('visibilitychange', refresh);
   }, []);
 
-  // Hydrate the persisted squad selection on first mount. Stale names (not
-  // present in the current squad list) are dropped silently per the spec;
-  // missing/corrupt values fall back to "Todos" (empty selection).
+  // Hydrate the persisted squad selection on first mount. Stale squads
+  // (not present in the current squad list) are dropped silently per the
+  // spec; missing/corrupt values fall back to "Todos" (empty selection).
+  //
+  // The stored shape is a list of `{ name, league }` pairs. Selections
+  // stored before squads carried their league are plain names: they are
+  // migrated to the squad of that name when it is unambiguous, and dropped
+  // when the name maps to several leagues (picking one of them would be a
+  // guess).
   useEffect(() => {
+    if (filterHydrated) return;
+    // Wait for the agenda: without it a legacy name cannot be resolved to a
+    // squad.
+    if (!matches) return;
+
     (async () => {
       const raw = await getItem(TEAM_FILTER_KEY);
       let parsed: unknown = null;
@@ -376,23 +432,44 @@ export function MatchesBoard({
         }
       }
       if (Array.isArray(parsed)) {
-        const cleaned = parsed.filter(
-          (v): v is string => typeof v === 'string' && v.length > 0,
-        );
+        const cleaned: string[] = [];
+        for (const entry of parsed) {
+          if (entry && typeof entry === 'object') {
+            const { name, league } = entry as { name?: unknown; league?: unknown };
+            if (typeof name !== 'string' || !name) continue;
+            const key = squadKey({
+              name,
+              league: typeof league === 'string' ? league : null,
+            });
+            if (availableKeys.has(key)) cleaned.push(key);
+            continue;
+          }
+          if (typeof entry !== 'string' || !entry) continue;
+          const matchesForName = squadList.filter((s) => s.name === entry);
+          if (matchesForName.length === 1) {
+            cleaned.push(squadKey(matchesForName[0]));
+          }
+        }
         setSelectedSquads(cleaned);
       }
       setFilterHydrated(true);
     })();
-  }, []);
+  }, [matches, squadList, availableKeys, filterHydrated]);
 
   // Persist selection on change, but only after hydration so we never
   // overwrite stored value with the empty default on first paint. Errors
   // from `setItem` (quota, private mode) are already swallowed inside the
   // storage helper.
+  //
+  // The stored shape is a list of `{ name, league }` pairs: the league is
+  // what tells two same-named teams of the same club apart.
   useEffect(() => {
     if (!filterHydrated) return;
-    setItem(TEAM_FILTER_KEY, JSON.stringify(selectedSquads));
-  }, [filterHydrated, selectedSquads]);
+    const stored = squadList
+      .filter((squad) => activeSelection.includes(squadKey(squad)))
+      .map((squad) => ({ name: squad.name, league: squad.league }));
+    setItem(TEAM_FILTER_KEY, JSON.stringify(stored));
+  }, [filterHydrated, activeSelection, squadList]);
   if (error) {
     return (
       <div className={styles.page}>
@@ -442,7 +519,10 @@ export function MatchesBoard({
       <ShareInfoPanel />
       {squadList.length > 0 && (
         <TeamFilter
-          squadList={squadList}
+          options={squadList.map((squad) => ({
+            key: squadKey(squad),
+            label: squadLabel(squad, ambiguousNames),
+          }))}
           selected={activeSelection}
           onChange={setSelectedSquads}
         />
@@ -743,28 +823,28 @@ function ShareInfoPanel() {
 }
 
 function TeamFilter({
-  squadList,
+  options,
   selected,
   onChange,
 }: {
-  squadList: string[];
+  options: { key: string; label: string }[];
   selected: string[];
   onChange: (next: string[]) => void;
 }) {
   const [open, setOpen] = useState(false);
 
-  const todosChecked = squadList.length > 0 && selected.length === squadList.length;
+  const todosChecked = options.length > 0 && selected.length === options.length;
 
-  function toggleSquad(name: string) {
-    if (selected.includes(name)) {
-      onChange(selected.filter((s) => s !== name));
+  function toggleSquad(key: string) {
+    if (selected.includes(key)) {
+      onChange(selected.filter((s) => s !== key));
     } else {
-      onChange([...selected, name]);
+      onChange([...selected, key]);
     }
   }
 
   function toggleTodos() {
-    onChange(todosChecked ? [] : [...squadList]);
+    onChange(todosChecked ? [] : options.map((option) => option.key));
   }
 
   // Close on outside click + Escape; do not close when the click lands
@@ -797,7 +877,7 @@ function TeamFilter({
       ? 'Todos los equipos'
       : selected.length === 1
         ? '1 equipo'
-        : `${selected.length} de ${squadList.length} equipos`;
+        : `${selected.length} de ${options.length} equipos`;
 
   return (
     <div className={styles.teamFilter}>
@@ -845,18 +925,18 @@ function TeamFilter({
             <span className={styles.teamFilterOptionLabel}>Todos</span>
           </label>
           <div className={styles.teamFilterDivider} aria-hidden />
-          {squadList.map((squad) => {
-            const checked = selected.includes(squad);
+          {options.map((option) => {
+            const checked = selected.includes(option.key);
             return (
-              <label key={squad} className={styles.teamFilterOption}>
+              <label key={option.key} className={styles.teamFilterOption}>
                 <input
                   type="checkbox"
                   className={styles.teamFilterOptionCheck}
                   checked={checked}
-                  onChange={() => toggleSquad(squad)}
-                  aria-label={`Filtrar por ${squad}`}
+                  onChange={() => toggleSquad(option.key)}
+                  aria-label={`Filtrar por ${option.label}`}
                 />
-                <span className={styles.teamFilterOptionLabel}>{squad}</span>
+                <span className={styles.teamFilterOptionLabel}>{option.label}</span>
               </label>
             );
           })}

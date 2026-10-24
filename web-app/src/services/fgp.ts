@@ -46,7 +46,12 @@ export async function fetchFgpMatches(): Promise<{ teams: Set<string>; fields: M
 
   $('.fila_agenda').each((_i, el) => {
     const nodes = (el as any).childNodes as any[];
-    const league = decodeHtml($(nodes[3]?.childNodes?.[0]).html());
+    // The league cell is a styled div whose text carries the markup's own
+    // padding (" LIGA REGULAR SENIOR MASCULINA"). It is trimmed because the
+    // league is part of a squad's identity: it travels in the calendar URL
+    // and in the filter labels, and a stray space would make two spellings
+    // of the same league look different.
+    const league = trimLocation(decodeHtml($(nodes[3]?.childNodes?.[0]).html()));
     const date = decodeHtml($(nodes[5]).html());
     const time = decodeHtml($(nodes[7]).html());
     const local = decodeHtml($(nodes[11]).html());

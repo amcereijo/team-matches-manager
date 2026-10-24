@@ -51,7 +51,12 @@ function parseLinkRequest(raw: unknown): LinkRequest | null {
   if (kind === 'team_calendar') {
     const squad = typeof body.squad === 'string' ? body.squad.trim() : '';
     if (!squad) return null;
-    return { kind: 'team_calendar', squad };
+    // The league is part of the squad's identity: the same team name exists
+    // in several leagues, and only the pair names one team. It is optional so
+    // a hand-typed squad without a league still resolves (to an empty
+    // calendar, never an error).
+    const league = typeof body.league === 'string' ? body.league.trim() : '';
+    return { kind: 'team_calendar', squad, league: league || null };
   }
 
   const date = typeof body.date === 'string' ? body.date.trim() : '';

@@ -96,6 +96,8 @@ To remove a club from the overrides (let it fall back to `club<code>`), delete t
 
 The Calendario page (`/calendario`) renders the three sections (Equipos / Pistas / Próximos partidos) directly from this payload. The "Enviar" button on each match opens a `wa.me/?text=...` deep-link with the same Spanish template used by the mobile app.
 
+**Squad identity — team + league.** A club's team is identified by its name *and* its league: `DOMINICOS A` exists in ALEVÍN GRUPO A, INFANTIL GRUPO B, JUVENIL GRUPO B and SENIOR MASCULINO, and each of those is a different team with its own fixtures. The "Equipos" filter, the squad calendar link and the public `/t` page therefore all carry the league, and the filter prints it in the option label whenever the same name is used by more than one league. Squads are derived from the fixtures by the upstream club code first (the federation prints `DOMINICOS A` where the catalogue says `CLUB AA DOMINICOS`) and by the club's name aliases as a fallback.
+
 ## Routes
 
 | Path              | Auth | Notes                                          |
@@ -107,7 +109,7 @@ The Calendario page (`/calendario`) renders the three sections (Equipos / Pistas
 | `/configuracion`  | ✔    | "Pantalla inicial" picker (localStorage)       |
 | `/link/<hash>`    | —    | Public short-link resolver → `302` to the canonical page |
 | `/c/[...]`        | —    | Public single-match landing page               |
-| `/t/<comp>/<code>/<squad>` | — | Public squad calendar page             |
+| `/t/<comp>/<code>/<league>/<squad>` | — | Public squad calendar page (league-scoped) |
 
 The auth guard lives in `src/app/(app)/layout.tsx` (server component) — it reads the session via `iron-session` and `redirect()`s to `/login` if no club is set.
 

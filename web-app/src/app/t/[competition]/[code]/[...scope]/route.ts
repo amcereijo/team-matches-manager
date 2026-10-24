@@ -6,7 +6,7 @@ import {
 } from '@/lib/calendarEvent';
 import { COMPETITIONS, type CompetitionId } from '@/constants/competitions';
 import { CLUBS_MAP, clubMapKey } from '@/constants/clubs';
-import { clubAliases, isClubMatch, normalizeClubName } from '@/lib/clubTeams';
+import { clubAliases, isClubMatch, normalizeClubName, sameLeague } from '@/lib/clubTeams';
 import { escapeHtml } from '@/lib/html';
 import { isDateProvisional, nowInMadrid, parseSidgadDate } from '@/lib/matchDate';
 import { fetchFgpMatches } from '@/services/fgp';
@@ -28,6 +28,17 @@ import type { ClubType, Game } from '@/types';
 // this page points at live upstream data instead. That brings caching,
 // latency, staleness and an error branch that `/c` does not have — see
 // design.md D1 and D5.
+//
+// The path is `/t/<competition>/<code>/<league>/<squad>`. The league is part
+// of the squad's identity: a club fields the same team name in several
+// leagues (`DOMINICOS A` is in ALEVÍN GRUPO A, INFANTIL GRUPO B, JUVENIL
+// GRUPO B and SENIOR MASCULINO), and each of those is a different team with
+// its own fixtures. A link that carried only the name showed the fixtures of
+// every league the name appears in.
+//
+// Links handed out before the league was part of the address keep working:
+// they arrive as `/t/<competition>/<code>/<squad>` (one scope segment) and
+// are answered with the squad's fixtures across leagues, exactly as before.
 
 const COMPETITION_IDS: CompetitionId[] = ['FMP', 'FGP'];
 
@@ -103,6 +114,33 @@ function decodeSegment(value: string): string {
   return normalizeSegment(decodeFully(value));
 }
 
+/**
+ * What the path says about which team the calendar is for.
+ *
+ * Two shapes are accepted:
+ *
+ * - `/t/<competition>/<code>/<league>/<squad>` — the current one. The league
+ *   and the squad name together name exactly one team.
+ * - `/t/<competition>/<code>/<squad>` — the legacy one, handed out before the
+ *   league became part of the identity. The squad is then matched by name
+ *   across every league it appears in.
+ */
+type SquadScope = {
+  squad: string;
+  league: string | null;
+};
+
+function parseScope(segments: string[]): SquadScope | null {
+  const decoded = segments.map(decodeSegment);
+  if (decoded.length === 2) {
+    return { league: decoded[0] || null, squad: decoded[1] };
+  }
+  if (decoded.length === 1) {
+    return { league: null, squad: decoded[0] };
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Fixture selection
 // ---------------------------------------------------------------------------
@@ -144,6 +182,12 @@ function isCompetitionId(value: string): value is CompetitionId {
  * `normalizeClubName` still absorbs case and whitespace differences in a
  * hand-edited link.
  *
+ * The LEAGUE scopes the list further, and only when the link carries one: a
+ * squad name alone is ambiguous — the same club fields `DOMINICOS A` in four
+ * different leagues — so a link without a league keeps the legacy behaviour
+ * (every league the name appears in) while a link with one shows exactly the
+ * league that was convoked.
+ *
  * A null `squad` means club-wide (no squad segment in the path).
  *
  * `kickoff` is null for a fixture whose date could not be parsed at all; those
@@ -153,6 +197,7 @@ function selectSquadFixtures(
   matches: Game[],
   club: ClubType,
   squad: string | null,
+  league: string | null,
 ): UpcomingFixture[] {
   const aliases = clubAliases(club.name);
   const squadNorm = squad ? normalizeClubName(squad) : null;
@@ -166,6 +211,8 @@ function selectSquadFixtures(
       isClubMatch(game.local, aliases) ||
       isClubMatch(game.visit, aliases);
     if (!isOurs) continue;
+
+    if (league && !sameLeague(game.league, league)) continue;
 
     if (squadNorm) {
       const isSquad =
@@ -319,10 +366,11 @@ function buildPageHtml(args: {
   club: ClubType;
   competitionName: string;
   squad: string;
+  league: string | null;
   fixtures: UpcomingFixture[];
   generatedAt: Date;
 }): string {
-  const { club, competitionName, squad, fixtures, generatedAt } = args;
+  const { club, competitionName, squad, league, fixtures, generatedAt } = args;
   const count = fixtures.length;
   const [first, ...rest] = fixtures;
   // Same Madrid-encoded "now" the selector used, so the temporal window is
@@ -398,7 +446,9 @@ a.map{color:var(--accent)}
   <header class="head">
     <p class="eyebrow">${escapeHtml(competitionName)}</p>
     <h1 class="title">${escapeHtml(squad)}</h1>
-    <p class="meta">${escapeHtml(club.name)} · ${countLabel}</p>
+    <p class="meta">${escapeHtml(club.name)}${
+      league ? ` · ${escapeHtml(league)}` : ''
+    } · ${countLabel}</p>
     <p class="fresh">Datos actualizados a las ${escapeHtml(formatGeneratedAt(generatedAt))}</p>
   </header>
   <div class="list">${body}</div>
@@ -448,15 +498,14 @@ const UPSTREAM_ERROR_HTML = plainPageHtml(
 
 export async function GET(
   _request: Request,
-  ctx: { params: { competition: string; code: string; squad: string } },
+  ctx: { params: { competition: string; code: string; scope: string[] } },
 ): Promise<Response> {
-  const { competition: rawCompetition, code: rawCode, squad: rawSquad } = ctx.params;
+  const { competition: rawCompetition, code: rawCode, scope: rawScope } = ctx.params;
 
   // Identity comes from the path and nowhere else — never from a session,
   // cookie, query string or request body.
   const competition = decodeSegment(rawCompetition);
   const codeRaw = decodeSegment(rawCode);
-  const squad = decodeSegment(rawSquad);
 
   if (!isCompetitionId(competition)) {
     return new Response(NOT_VALID_HTML, { status: 404, headers: { ...HTML_HEADERS, 'Cache-Control': 'public, max-age=300' } });
@@ -472,15 +521,24 @@ export async function GET(
     return new Response(NOT_VALID_HTML, { status: 404, headers: { ...HTML_HEADERS, 'Cache-Control': 'public, max-age=300' } });
   }
 
+  // The scope is the league and the squad, in either the current shape
+  // (`<league>/<squad>`) or the legacy one (`<squad>`). Anything else is not
+  // a link this app can have produced.
+  const parsedScope = parseScope(rawScope ?? []);
+  if (!parsedScope) {
+    return new Response(NOT_VALID_HTML, { status: 404, headers: { ...HTML_HEADERS, 'Cache-Control': 'public, max-age=300' } });
+  }
+
   // An empty squad segment resolves to a club-wide calendar rather than a
   // 404: identity is valid, only the scope was omitted. Reaching this needs a
   // hand-crafted URL, since the builder always emits the segment.
-  const scope = squad || null;
+  const squad = parsedScope.squad || null;
+  const league = parsedScope.league;
 
   let fixtures: UpcomingFixture[];
   try {
     const matches = await fetchCompetitionMatches(competition);
-    fixtures = selectSquadFixtures(matches, club, scope);
+    fixtures = selectSquadFixtures(matches, club, squad, league);
   } catch (err) {
     // Log the failure for the operator, but log the error object only — never
     // the request, the IP, or the user agent.
@@ -494,7 +552,8 @@ export async function GET(
   const html = buildPageHtml({
     club,
     competitionName: COMPETITIONS[competition].name,
-    squad: scope ?? club.name,
+    squad: squad ?? club.name,
+    league,
     fixtures,
     generatedAt: new Date(),
   });

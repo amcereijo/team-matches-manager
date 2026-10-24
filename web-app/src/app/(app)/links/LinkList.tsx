@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import type { LinkView } from '@/lib/shortLink';
+import type { Squad } from '@/types';
 import styles from './links.module.css';
 
 // The club's short links: what each one points at, its short URL, and the
@@ -28,14 +29,28 @@ export function LinkList({
   squads,
 }: {
   initialLinks: LinkView[];
-  squads: string[];
+  squads: Squad[];
 }) {
   const [links, setLinks] = useState<LinkView[]>(initialLinks);
   const [busyHash, setBusyHash] = useState<string | null>(null);
   const [copiedHash, setCopiedHash] = useState<string | null>(null);
   const [squad, setSquad] = useState('');
+  const [league, setLeague] = useState('');
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+
+  // The league is part of a squad's identity: the same team name exists in
+  // several leagues, and only the pair names one team. The picker therefore
+  // asks for both, and the team suggestions are narrowed to the league that
+  // was picked.
+  const leagues = Array.from(
+    new Set(squads.map((s) => s.league).filter((l): l is string => Boolean(l))),
+  ).sort((a, b) => a.localeCompare(b, 'es'));
+
+  const availableSquads = league
+    ? squads.filter((s) => s.league === league)
+    : squads;
+  const squadNames = Array.from(new Set(availableSquads.map((s) => s.name)));
 
   async function copyLink(link: LinkView) {
     try {
@@ -81,7 +96,11 @@ export function LinkList({
       const res = await fetch('/api/links', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ links: [{ kind: 'team_calendar', squad: value }] }),
+        body: JSON.stringify({
+          links: [
+            { kind: 'team_calendar', squad: value, league: league.trim() || null },
+          ],
+        }),
       });
       if (!res.ok) {
         setCreateError('No se pudo crear el enlace');
@@ -92,6 +111,7 @@ export function LinkList({
       if (created) {
         setLinks((prev) => [created, ...prev]);
         setSquad('');
+        setLeague('');
       }
     } catch {
       setCreateError('No se pudo crear el enlace');
@@ -115,6 +135,24 @@ export function LinkList({
       <section className={styles.create}>
         <form onSubmit={createLink} className={styles.createForm}>
           <label className={styles.field}>
+            <span className={styles.fieldLabel}>Liga</span>
+            <select
+              className={styles.input}
+              value={league}
+              onChange={(e) => {
+                setLeague(e.target.value);
+                setSquad('');
+              }}
+            >
+              <option value="">Sin liga (todas)</option>
+              {leagues.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className={styles.field}>
             <span className={styles.fieldLabel}>Nuevo enlace de calendario de equipo</span>
             <input
               className={styles.input}
@@ -124,10 +162,14 @@ export function LinkList({
               onChange={(e) => setSquad(e.target.value)}
             />
             <datalist id="link-squads">
-              {squads.map((name) => (
+              {squadNames.map((name) => (
                 <option key={name} value={name} />
               ))}
             </datalist>
+            <span className={styles.fieldHint}>
+              El enlace muestra solo los partidos de ese equipo
+              {league ? ` en ${league}` : ''}.
+            </span>
           </label>
           <button type="submit" className={styles.primaryButton} disabled={creating || !squad.trim()}>
             <span aria-hidden>🔗</span>

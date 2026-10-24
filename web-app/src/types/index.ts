@@ -29,6 +29,22 @@ export type Team = {
   name: string;
 };
 
+/**
+ * A squad of the club: the team as the federation names it, plus the league
+ * it plays in.
+ *
+ * The league is part of the identity, not decoration. A club fields the same
+ * team name in several leagues (`DOMINICOS A` in ALEVÍN GRUPO A, INFANTIL
+ * GRUPO B, JUVENIL GRUPO B and SENIOR MASCULINO), and each of those is a
+ * separate team with its own fixtures. Anything that identifies "which of my
+ * teams" — the Calendario filter, the squad calendar link, the public team
+ * calendar page — must therefore carry the league too.
+ */
+export type Squad = {
+  name: string;
+  league: string | null;
+};
+
 export type ClubType = {
   code: number;
   name: string;

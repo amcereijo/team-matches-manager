@@ -4,6 +4,7 @@ import { listLinksForClub } from '@/lib/server/linkStore';
 import { linkView } from '@/lib/shortLink';
 import { squadsForMatches } from '@/lib/clubTeams';
 import { getMatchesForClub } from '@/services/competition';
+import type { Squad } from '@/types';
 import { LinkList } from './LinkList';
 
 export const dynamic = 'force-dynamic';
@@ -49,10 +50,14 @@ export default async function LinksPage() {
   // data exactly as the Calendario's team filter derives them. A squad typed
   // by hand is accepted too: an unmatched squad resolves to an empty
   // calendar, not an error — the `/t` contract already in force.
-  let squads: string[] = [];
+  //
+  // A squad is a (team, league) pair: the same team name exists in several
+  // leagues, and only the pair names one team. The picker therefore offers
+  // the league alongside the name, and the created link carries both.
+  let squads: Squad[] = [];
   try {
     const data = await getMatchesForClub(club);
-    squads = squadsForMatches(data.matches, club.name);
+    squads = squadsForMatches(data.matches, club);
   } catch (err) {
     console.error('[links] failed to load squads', err);
   }

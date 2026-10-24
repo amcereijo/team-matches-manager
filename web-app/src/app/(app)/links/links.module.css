@@ -59,6 +59,12 @@
   color: var(--text-muted);
 }
 
+.fieldHint {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-subtle);
+}
+
 .input {
   height: 38px;
   padding: 0 10px;

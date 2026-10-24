@@ -41,6 +41,15 @@ export type LinkKind = 'team_calendar' | 'match_calendar';
 export type LinkPayload = {
   /** team_calendar: the squad the calendar is scoped to. */
   squad?: string;
+  /**
+   * team_calendar: the league that squad plays in.
+   *
+   * Part of the squad's identity: the same team name exists in several
+   * leagues, and only the pair names one team. Absent for links created
+   * before squads carried their league — those keep the legacy
+   * name-only scope.
+   */
+  league?: string;
   /** match_calendar: the fixture's date, as published (`dd/mm/yyyy`). */
   date?: string;
   /** match_calendar: the fixture's kickoff (`hh:mm`). */
@@ -53,7 +62,7 @@ export type LinkPayload = {
 
 /** What the client asks for when creating a link. */
 export type LinkRequest =
-  | { kind: 'team_calendar'; squad: string }
+  | { kind: 'team_calendar'; squad: string; league?: string | null }
   | {
       kind: 'match_calendar';
       date: string;
@@ -141,7 +150,14 @@ export function targetKeyFor(
 ): string {
   if (kind === 'team_calendar') {
     const team = request as Extract<LinkRequest, { kind: 'team_calendar' }>;
-    return `${club.competition}:${club.code}:${team.squad}`;
+    // The league is part of the target: "DOMINICOS A in ALEVÍN GRUPO A" and
+    // "DOMINICOS A in SENIOR MASCULINO" are two different teams and must not
+    // share a link. A link without a league keeps the legacy key shape, so
+    // the links already handed out are reused rather than duplicated.
+    const league = team.league?.trim();
+    return league
+      ? `${club.competition}:${club.code}:${league}:${team.squad}`
+      : `${club.competition}:${club.code}:${team.squad}`;
   }
   const match = request as Extract<LinkRequest, { kind: 'match_calendar' }>;
   return `${club.competition}:${club.code}:${match.date}:${match.local}:${match.visit}`;
@@ -161,7 +177,11 @@ export function payloadFor(
   request: LinkRequest,
 ): LinkPayload {
   if (kind === 'team_calendar') {
-    return { squad: (request as Extract<LinkRequest, { kind: 'team_calendar' }>).squad };
+    const team = request as Extract<LinkRequest, { kind: 'team_calendar' }>;
+    const league = team.league?.trim();
+    return league
+      ? { squad: team.squad, league }
+      : { squad: team.squad };
   }
 
   const match = request as Extract<LinkRequest, { kind: 'match_calendar' }>;
@@ -203,7 +223,13 @@ export function canonicalPathFor(
   payload: LinkPayload,
 ): string | null {
   if (kind === 'team_calendar') {
-    return buildTeamCalendarPath(club, payload.squad ?? null);
+    const league = payload.league?.trim();
+    return buildTeamCalendarPath(
+      club,
+      league
+        ? { name: payload.squad ?? '', league }
+        : { name: payload.squad ?? '', league: null },
+    );
   }
 
   if (!payload.date || !payload.time || !payload.title) return null;
@@ -222,7 +248,12 @@ export function canonicalPathFor(
  */
 export function describeLink(kind: LinkKind, payload: LinkPayload): string {
   if (kind === 'team_calendar') {
-    return `Calendario del equipo · ${payload.squad ?? ''}`.trim();
+    const squad = payload.squad ?? '';
+    const league = payload.league?.trim();
+    // The league is spelled out so the club can tell two same-named teams
+    // apart in the link list.
+    const scope = league ? `${squad} — ${league}` : squad;
+    return `Calendario del equipo · ${scope}`.trim();
   }
   const when = [payload.date, payload.time].filter(Boolean).join(' ');
   return `Partido · ${when} · ${payload.title ?? ''}`.trim();

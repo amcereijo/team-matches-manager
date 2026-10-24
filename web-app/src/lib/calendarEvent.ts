@@ -1,6 +1,6 @@
-import type { ClubType, Game } from '@/types';
+import type { ClubType, Game, Squad } from '@/types';
 import type { CompetitionId } from '@/constants/competitions';
-import { clubAliases, isClubMatch } from '@/lib/clubTeams';
+import { ourSide } from '@/lib/clubTeams';
 import { parseSidgadDate } from '@/lib/matchDate';
 
 export const MADRID_TZ_ID = 'Europe/Madrid';
@@ -55,27 +55,19 @@ export function isMatchReady(game: Game): boolean {
 }
 
 /**
- * Does this side of the fixture belong to `club`?
+ * The team that is NOT one of the user's clubs.
  *
- * MUST use the same two-pronged rule as `getMatchesForClub`: the upstream
- * `param_game` code AND the name aliases. Name matching alone is not enough,
- * because the federation's squad names do not reliably derive from the
- * catalogue's club names — `ALAMEDA DE OSUNA A` is club 386's
- * `ALAMEDA OSUNA HP`. With aliases alone, neither side of
- * `ALAMEDA DE OSUNA A - CDE EL CASAR A` looks like club 386, so any helper
- * that then guesses "the away side is the rival" silently points at the
- * wrong team.
+ * "Which side is ours" is decided by `ourSide`, the shared helper that
+ * consults the upstream `param_game` code FIRST and falls back to the club's
+ * name aliases. Code-first matters: the federation's squad names do not
+ * reliably derive from the catalogue's club names (`ALAMEDA DE OSUNA A` is
+ * club 386's `ALAMEDA OSUNA HP`), and a name-only test that does hit can pick
+ * the wrong side when a rival shares the club's name.
  */
-function isOurSide(team: string | null, teamCode: number | null, club: ClubType): boolean {
-  return teamCode === club.code || isClubMatch(team, clubAliases(club.name));
-}
-
-/** The team that is NOT one of the user's clubs. */
 export function opponentFor(game: Game, club: ClubType): string {
-  const localIsUs = isOurSide(game.local, game.localCode, club);
-  const visitIsUs = isOurSide(game.visit, game.visitCode, club);
-  if (localIsUs && !visitIsUs) return (game.visit ?? '').trim();
-  if (visitIsUs && !localIsUs) return (game.local ?? '').trim();
+  const side = ourSide(game, club);
+  if (side === 'local') return (game.visit ?? '').trim();
+  if (side === 'visit') return (game.local ?? '').trim();
   return (game.visit ?? '').trim();
 }
 
@@ -89,7 +81,7 @@ export function locationText(game: Game): string {
 
 /**
  * The squad a convocatoria is for: the side of the fixture that belongs to the
- * user's own club.
+ * user's own club, together with the league that side plays in.
  *
  * This is deliberately NOT the club. A club like `HL NOROESTE` can field
  * several squads (`HL NOROESTE A`, `HL NOROESTE B`) and each plays its own
@@ -98,39 +90,52 @@ export function locationText(game: Game): string {
  * stores one base name per club, and the fixtures carry the suffixed squad
  * names.
  *
+ * The LEAGUE is part of the answer because a squad name alone does not
+ * identify a team: the same club fields `DOMINICOS A` in ALEVÍN GRUPO A and
+ * in SENIOR MASCULINO, and those are two different teams with two different
+ * fixture lists. Without the league, the squad calendar shows the fixtures of
+ * every league the name appears in.
+ *
  * Returns `null` only when neither side is usable at all, which is the signal
  * for the caller to omit the link line entirely.
  */
-export function squadFor(game: Game, club: ClubType): string | null {
-  const localIsUs = isOurSide(game.local, game.localCode, club);
-  const visitIsUs = isOurSide(game.visit, game.visitCode, club);
-  if (localIsUs && game.local) return game.local;
-  if (visitIsUs && game.visit) return game.visit;
+export function squadFor(game: Game, club: ClubType): Squad | null {
+  const side = ourSide(game, club);
+  if (side === 'local' && game.local) return { name: game.local, league: game.league };
+  if (side === 'visit' && game.visit) return { name: game.visit, league: game.league };
   // Defensive: neither side identified as ours (an upstream rename, a fixture
   // for a club we have no code or alias for). Fall back to the away side,
   // mirroring `opponentFor`, so the link still points at something real.
-  return game.visit?.trim() || null;
+  const fallback = game.visit?.trim();
+  return fallback ? { name: fallback, league: game.league } : null;
 }
 
 /**
- * Build the team calendar path — `/t/<competition>/<code>/<squad>`.
+ * Build the team calendar path — `/t/<competition>/<code>/<league>/<squad>`.
  *
  * Split out from `buildTeamCalendarUrl` so the short-link store can derive the
  * very same path from its stored parameters without an origin. There is one
  * definition of the path shape; the URL builder only prepends the origin.
+ *
+ * The league segment is what keeps a squad unambiguous: the same team name
+ * exists in several leagues, and only the pair identifies one team. A squad
+ * with no known league (a hand-typed one, or a legacy link) falls back to the
+ * old three-segment shape `/t/<competition>/<code>/<squad>`, which the public
+ * route still understands.
  *
  * Returns null when the squad cannot be determined, so the caller omits the
  * line rather than emitting a broken link.
  */
 export function buildTeamCalendarPath(
   club: { competition: CompetitionId; code: number },
-  squad: string | null,
+  squad: Squad | null,
 ): string | null {
   if (!squad) return null;
   const segments = [
     club.competition,
     String(club.code),
-    squad,
+    ...(squad.league ? [squad.league] : []),
+    squad.name,
   ].map((s) => encodeURIComponent(s));
   return `${TEAM_CALENDAR_PATH_PREFIX}/${segments.join('/')}`;
 }
@@ -148,7 +153,7 @@ export function buildTeamCalendarPath(
  */
 export function buildTeamCalendarUrl(
   club: { competition: CompetitionId; code: number },
-  squad: string | null,
+  squad: Squad | null,
   baseUrl: string,
 ): string | null {
   const path = buildTeamCalendarPath(club, squad);
