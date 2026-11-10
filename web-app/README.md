@@ -248,6 +248,7 @@ The two links the app puts into a WhatsApp convocatoria are long, and they carry
 - **`GET /link/<hash>`** — public, anonymous, read-only. It looks the hash up and answers `302` with the canonical path it points at (`/t/...` or `/c/...`). The canonical pages stay the source of truth; the short link only names one of them. An unknown, malformed or deactivated hash answers `404` with a plain Spanish page — and so does a match link whose fixture date is over.
 - **Privacy** — the resolver logs nothing about the requester (no IP, no user agent) and contacts no third party. It is strictly read-only: resolving a link writes nothing.
 - **Storage** — the `link` table lives in the same database as the sent-match store (same `SENT_STORE_URL` / `SENT_STORE_AUTH_TOKEN` vars, same local `data/sent.sqlite`). One row per club, per kind, per target, scoped by `club_code` + `competition`.
+- **Schema bootstrap** — the table and its index are created **once per process**, not on every store call. The DDL was a dozen pointless round trips on the path of a share, and on a remote database they are the round trips that add up.
 - **Idempotency** — asking twice for the same target returns the same hash and refreshes the stored parameters, so a corrected kickoff keeps the URL already pasted in the WhatsApp group. The kickoff time is deliberately not part of a target's identity; the fixture's date is.
 - **Expiry** — a match link is good for the whole of its fixture's day and stops working once that day is over. The comparison is a calendar-day one in `Europe/Madrid`, so a match played today is still shareable tonight; tomorrow it is gone. The rule is enforced by the resolver itself, so it holds for every link in the store. A team-calendar link names a squad rather than a fixture and never expires.
 - **Cleanup on create** — creating a link first stands down the requesting club's expired match links, so the club's own list stays truthful and the store's one-active-link-per-target rule holds. The sweep is scoped to that club; the expiry itself does not depend on it. A swept link is never handed out again — creating that target mints a new hash.
@@ -259,7 +260,13 @@ The two links the app puts into a WhatsApp convocatoria are long, and they carry
 
 When a club shares a match, the app asks the store for the two short links and puts them in the message. The request is capped at 2.5 s: if the store cannot be reached, times out or answers badly, the message is composed with the canonical `/c/...` and `/t/...` URLs instead and the conversation opens anyway. A failure in the link store never blocks a share.
 
+**The links are resolved before the click, not during it.** The first share of a season is the one that pays the full price of the store — a cold serverless function, a cold database connection, the link table's own bootstrap — and the 2.5 s cap is not enough for it. Whichever share lost that race went out with the long canonical URLs, and the club had to send the convocatoria again to get the short ones. So the Calendario now resolves the links of the fixtures it can send **in the background, when the board loads** (in chunks, from the top down), and the Enviar handler composes the message straight from what it already has — no waiting, and the same short links on the very first share.
+
+The click-time request is still there as a fallback, for a fixture the background pass did not reach. A store that cannot be reached at all still yields the canonical URLs, and the conversation opens anyway.
+
 The canonical URLs are unchanged by any of this — links already sent in a WhatsApp group keep working, and the app never depends on the store to render a page.
+
+Because the background pass creates the links for the fixtures on the board, the **Links** page lists a short link for every squad and every sendable fixture — not only for the ones already shared. Match links still expire the day after their fixture; team links stay until they are deactivated.
 
 ## Deploy
 

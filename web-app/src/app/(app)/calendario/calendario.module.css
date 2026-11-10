@@ -286,9 +286,13 @@
   font-size: 15px;
   font-weight: 600;
   color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  line-height: 1.35;
+  /* The title must stay fully readable. It used to be a single clipped line
+     (`white-space: nowrap` + ellipsis), and the "Enviado" badge that appears
+     after the first share squeezes this column — on a phone it left barely
+     room for the teams the match is between, so the title was cut off. The
+     title now wraps instead of being cropped. */
+  overflow-wrap: break-word;
 }
 
 .matchMeta {
@@ -326,6 +330,22 @@
   gap: var(--space-2);
   flex-wrap: wrap;
   max-width: 220px;
+}
+
+/* On a narrow screen the actions column — the "Enviado" badge and the "Enviar"
+   button — takes a third of the row away from the title, and the title is
+   wrapped into a narrow column. Below the title instead, the full title keeps
+   the whole width of the row. */
+@media (max-width: 560px) {
+  .matchRow {
+    grid-template-columns: 1fr;
+    gap: var(--space-3);
+  }
+
+  .matchActions {
+    max-width: none;
+    justify-content: flex-start;
+  }
 }
 
 .sendWhatsButton {

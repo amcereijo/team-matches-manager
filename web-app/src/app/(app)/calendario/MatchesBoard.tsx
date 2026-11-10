@@ -127,27 +127,77 @@ function formatMatchDay(date?: string | null): string {
  */
 type ShortLinks = { match?: string; team?: string };
 
+/**
+ * The short links resolved for ONE fixture, and whether the store has already
+ * answered for it.
+ *
+ * `resolved` is what lets the Enviar handler compose the message straight
+ * away: the store has spoken for this fixture — successfully or not — so
+ * there is nothing left to wait for. Without it the handler asks the store at
+ * click time, as it always did.
+ */
+type FixtureLinks = ShortLinks & { resolved: boolean };
+
+/**
+ * One half of a fixture's links: what the store needs to mint the short URL,
+ * and the canonical URL that short URL replaces.
+ *
+ * The canonical URL travels with its request because it is the target's
+ * identity: the store answers with the canonical path each link points at,
+ * and a batch carries several links of the same kind, so the two are matched
+ * on that path rather than on the kind.
+ *
+ * `request` is null when the fixture cannot produce one (a match without both
+ * team names, a fixture whose day is already over). The canonical URL is kept
+ * anyway, so the message still carries the long link for it — exactly as it
+ * did before short links existed.
+ */
+type LinkPlanPart = {
+  request: Record<string, unknown> | null;
+  canonical: string;
+};
+
+/** The two links a fixture's convocatoria carries. */
+type LinkPlan = {
+  match?: LinkPlanPart;
+  team?: LinkPlanPart;
+};
+
 // How long the share waits for the link store before giving up and using the
 // canonical URLs. A share that waits on an unreachable store is worse than a
 // share with a long URL.
 const SHORT_LINK_TIMEOUT_MS = 2500;
 
+// The pre-resolution runs in the background, with nobody waiting for it, so
+// it gets a longer cap than the click-time fallback.
+const PRE_RESOLVE_TIMEOUT_MS = 10000;
+
+// How many fixtures one pre-resolution request carries. A club's agenda can
+// hold a hundred fixtures, and one request for all of them would keep the
+// store busy for a long time; the board is resolved in chunks instead, from
+// the top down, so the fixtures nearest the top — the ones about to be sent —
+// are ready first.
+const PRE_RESOLVE_CHUNK_SIZE = 12;
+
 /**
- * Ask the link store for the short URLs of this fixture's two links.
+ * What the link store needs to mint a fixture's two short links, and the
+ * canonical URLs those links replace.
  *
- * Best-effort by design: any failure — timeout, non-2xx, malformed answer —
- * resolves to an empty map, and the caller composes the message with the
- * canonical URLs. The club never sees an error, because there is nothing for
- * them to act on: the message is complete either way.
+ * Returns null when the club is unknown: without its code and competition
+ * the store cannot own the link.
  */
-async function resolveShortLinks(
+function planLinksFor(
   game: Game,
   clubName: string,
   competition?: CompetitionId,
   clubCode?: number,
-): Promise<ShortLinks> {
-  if (competition === undefined || clubCode === undefined) return {};
+): LinkPlan | null {
+  if (competition === undefined || clubCode === undefined) return null;
 
+  // Both link builders need the whole club (code + name), because "which side
+  // of the fixture is ours" is decided from the `param_game` codes as well as
+  // the name aliases. Reassembled here from the props the board already
+  // receives; `username` is unused by either builder.
   const club: ClubType = {
     competition,
     code: clubCode,
@@ -155,32 +205,83 @@ async function resolveShortLinks(
     username: '',
   };
 
-  const squad = squadFor(game, club);
+  const plan: LinkPlan = {};
 
-  const requests: Record<string, unknown>[] = [];
-  if (isMatchReady(game)) {
-    requests.push({
-      kind: 'match_calendar',
-      date: game.date,
-      time: game.time,
-      local: game.local,
-      visit: game.visit,
-      localCode: game.localCode,
-      visitCode: game.visitCode,
-      location: game.location,
-      map: game.map,
-    });
+  // The one-tap add-to-calendar link for THIS match. It exists only for a
+  // ready match: `buildCalendarUrl` returns null for a pending one, and the
+  // line is left out of the message.
+  const canonicalMatch = buildCalendarUrl(game, club, WEB_APP_BASE_URL);
+  if (canonicalMatch) {
+    // The store needs both team names to own the link. A fixture missing one
+    // keeps the canonical URL in the message and simply gets no short link.
+    const request =
+      game.local && game.visit
+        ? {
+            kind: 'match_calendar',
+            date: game.date,
+            time: game.time,
+            local: game.local,
+            visit: game.visit,
+            localCode: game.localCode,
+            visitCode: game.visitCode,
+            location: game.location,
+            map: game.map,
+          }
+        : null;
+    plan.match = { request, canonical: canonicalMatch };
   }
-  if (squad) {
-    // The league travels with the squad: the same team name exists in
-    // several leagues, and the calendar link must point at the team of THIS
-    // fixture, not at every team that happens to share the name.
-    requests.push({ kind: 'team_calendar', squad: squad.name, league: squad.league });
+
+  // The squad's standing calendar. Unlike the match link, this one has NO
+  // readiness gate: the squad name is readable off any fixture, so the
+  // builder can always derive it. Only a fixture whose squad cannot be
+  // determined omits the line.
+  const squad = squadFor(game, club);
+  const squadName = squad?.name?.trim() ?? '';
+  // The league travels with the squad: the same team name exists in several
+  // leagues, and the calendar link must point at the team of THIS fixture,
+  // not at every team that happens to share the name.
+  const league = squad?.league?.trim() || null;
+  const canonicalTeam = buildTeamCalendarUrl(
+    club,
+    squadName ? { name: squadName, league } : null,
+    WEB_APP_BASE_URL,
+  );
+  if (canonicalTeam) {
+    plan.team = {
+      request: { kind: 'team_calendar', squad: squadName, league },
+      canonical: canonicalTeam,
+    };
   }
-  if (requests.length === 0) return {};
+
+  return plan;
+}
+
+/** The path of an absolute URL — the identity the store answers with. */
+function pathOf(url: string): string {
+  try {
+    return new URL(url).pathname;
+  } catch {
+    // A relative URL (no base origin) is already a path.
+    return url;
+  }
+}
+
+/**
+ * Ask the link store for the short URLs of a batch of link requests.
+ *
+ * Best-effort by design: any failure — timeout, non-2xx, malformed answer —
+ * resolves to null, and the caller composes the message with the canonical
+ * URLs. The club never sees an error, because there is nothing for them to
+ * act on: the message is complete either way.
+ */
+async function postLinkRequests(
+  requests: Record<string, unknown>[],
+  timeoutMs: number,
+): Promise<{ url?: string; target?: string | null }[] | null> {
+  if (requests.length === 0) return null;
 
   const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), SHORT_LINK_TIMEOUT_MS);
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch('/api/links', {
       method: 'POST',
@@ -188,40 +289,163 @@ async function resolveShortLinks(
       body: JSON.stringify({ links: requests }),
       signal: controller.signal,
     });
-    if (!res.ok) return {};
+    if (!res.ok) return null;
 
-    const data = (await res.json()) as { links?: { kind?: string; url?: string }[] };
-    const resolved: ShortLinks = {};
-    for (const link of data.links ?? []) {
-      if (!link.url) continue;
-      if (link.kind === 'match_calendar') resolved.match = link.url;
-      if (link.kind === 'team_calendar') resolved.team = link.url;
-    }
-    return resolved;
+    const data = (await res.json()) as {
+      links?: { url?: string; target?: string | null }[];
+    };
+    return data.links ?? null;
   } catch {
-    return {};
+    return null;
   } finally {
     window.clearTimeout(timer);
+  }
+}
+
+/** The short URL the store gave each canonical target, by canonical path. */
+function shortUrlsByTarget(
+  links: { url?: string; target?: string | null }[],
+): Map<string, string> {
+  const byTarget = new Map<string, string>();
+  for (const link of links) {
+    if (link.url && link.target) byTarget.set(link.target, link.url);
+  }
+  return byTarget;
+}
+
+/**
+ * Ask the link store for the short URLs of a single fixture.
+ *
+ * Best-effort: on any failure the caller composes the message with the
+ * canonical URLs.
+ */
+async function resolveShortLinks(plan: LinkPlan | null): Promise<ShortLinks> {
+  if (!plan) return {};
+
+  const requests = [plan.match?.request, plan.team?.request].filter(
+    (request): request is Record<string, unknown> => Boolean(request),
+  );
+  const links = await postLinkRequests(requests, SHORT_LINK_TIMEOUT_MS);
+  if (!links) return {};
+
+  const byTarget = shortUrlsByTarget(links);
+  const resolved: ShortLinks = {};
+  if (plan.match?.request) {
+    const url = byTarget.get(pathOf(plan.match.canonical));
+    if (url) resolved.match = url;
+  }
+  if (plan.team?.request) {
+    const url = byTarget.get(pathOf(plan.team.canonical));
+    if (url) resolved.team = url;
+  }
+  return resolved;
+}
+
+/**
+ * Resolve the short links of every fixture on the board, in the background.
+ *
+ * Why this happens BEFORE the click: the first share of a season is the one
+ * that pays the full price of the link store — a cold serverless function, a
+ * cold database connection, the link table's own bootstrap — and the Enviar
+ * handler only waits a couple of seconds for the answer. Whichever share
+ * lost that race went out with the long canonical URLs, and the club had to
+ * send the convocatoria again to get the short ones.
+ *
+ * Resolving the links when the board loads removes the race: by the time the
+ * club taps Enviar the answer is already in hand, so the very first
+ * convocatoria carries the short URLs too.
+ *
+ * Only the fixtures the club can actually send are asked for — a pending one
+ * has no Enviar button, so it never needs a link. The board is resolved in
+ * chunks, from the top down, so the fixtures about to be sent are ready
+ * first. Every chunk is reported as soon as it lands, through `onChunk`.
+ */
+async function resolveShortLinksForFixtures(
+  games: Game[],
+  clubName: string,
+  competition: CompetitionId | undefined,
+  clubCode: number | undefined,
+  keyFor: (game: Game) => string,
+  onChunk: (resolved: Record<string, FixtureLinks>) => void,
+): Promise<void> {
+  const plans: { key: string; plan: LinkPlan }[] = [];
+
+  for (const game of games) {
+    // A fixture without a confirmed kickoff has no Enviar button: there is
+    // nothing to send, so there is no link to resolve.
+    if (!isMatchReady(game)) continue;
+    const plan = planLinksFor(game, clubName, competition, clubCode);
+    if (!plan) continue;
+    plans.push({ key: keyFor(game), plan });
+  }
+
+  if (plans.length === 0) return;
+
+  // The team links are few — one per squad — and every fixture of that squad
+  // shares them. They are asked for once, with the first chunk.
+  const teamRequests: Record<string, unknown>[] = [];
+  const teamTargets = new Set<string>();
+  for (const { plan } of plans) {
+    if (!plan.team?.request) continue;
+    const identity = pathOf(plan.team.canonical);
+    if (teamTargets.has(identity)) continue;
+    teamTargets.add(identity);
+    teamRequests.push(plan.team.request);
+  }
+
+  // What the store has answered so far, by canonical path. It accumulates
+  // across the chunks: a fixture's team link is answered in the first chunk
+  // and its match link in its own.
+  const byTarget = new Map<string, string>();
+
+  for (let start = 0; start < plans.length; start += PRE_RESOLVE_CHUNK_SIZE) {
+    const chunk = plans.slice(start, start + PRE_RESOLVE_CHUNK_SIZE);
+
+    const requests: Record<string, unknown>[] = [];
+    if (start === 0) requests.push(...teamRequests);
+    for (const { plan } of chunk) {
+      if (!plan.match?.request) continue;
+      requests.push(plan.match.request);
+    }
+    if (requests.length === 0) continue;
+
+    const links = await postLinkRequests(requests, PRE_RESOLVE_TIMEOUT_MS);
+    // A chunk that did not get an answer is simply left unresolved: the
+    // click handler asks the store again for those fixtures.
+    if (!links) continue;
+    for (const [target, url] of shortUrlsByTarget(links)) {
+      byTarget.set(target, url);
+    }
+
+    const resolved: Record<string, FixtureLinks> = {};
+
+    for (const { key, plan } of chunk) {
+      const match =
+        plan.match?.request ? byTarget.get(pathOf(plan.match.canonical)) : undefined;
+      const team =
+        plan.team?.request ? byTarget.get(pathOf(plan.team.canonical)) : undefined;
+
+      // A fixture is only "resolved" when every link it could have got did
+      // come back: a partial answer means the chunk was cut short, and the
+      // click handler asks the store again for that fixture.
+      const complete =
+        (!plan.match?.request || Boolean(match)) &&
+        (!plan.team?.request || Boolean(team));
+
+      resolved[key] = { match, team, resolved: complete };
+    }
+
+    onChunk(resolved);
   }
 }
 
 function buildWhatsappUrl(
   game: Game,
   clubName: string,
-  competition?: CompetitionId,
-  clubCode?: number,
+  plan: LinkPlan | null,
   shortLinks?: ShortLinks,
 ): string {
   let text = '';
-
-  // Both link builders need the whole club (code + name), because "which side
-  // of the fixture is ours" is decided from the `param_game` codes as well as
-  // the name aliases. Reassembled here from the props the board already
-  // receives; `username` is unused by either builder.
-  const club: ClubType | null =
-    competition !== undefined && clubCode !== undefined
-      ? { competition, code: clubCode, name: clubName, username: '' }
-      : null;
 
   // Header: the fixture itself, bolded. Leading with the matchup reads
   // better than burying it under a sentence about when it is.
@@ -251,16 +475,16 @@ function buildWhatsappUrl(
   }
 
   // One-tap "Add to calendar" for THIS match — the single-match landing page.
-  // Only for ready matches: when `buildCalendarUrl` returns null (missing
-  // date, sentinel time, etc.) the whole line is omitted so pending matches
-  // keep their current text.
+  // Only for ready matches: when there is no canonical URL (missing date,
+  // sentinel time, etc.) the whole line is omitted so pending matches keep
+  // their current text.
   // The URL goes on its own line because WhatsApp renders it as a tappable
   // chip there; inline it just trails the label.
   //
   // The canonical URL decides WHETHER the line exists (it is null for a
   // pending match); the short link, when the store answered, decides only
   // WHICH url the line carries.
-  const canonicalMatchUrl = club ? buildCalendarUrl(game, club, WEB_APP_BASE_URL) : null;
+  const canonicalMatchUrl = plan?.match?.canonical ?? null;
   const calendarUrl = canonicalMatchUrl ? shortLinks?.match ?? canonicalMatchUrl : null;
   if (calendarUrl) {
     text += `\n📅 Añadir al calendario:\n${calendarUrl}`;
@@ -291,9 +515,7 @@ function buildWhatsappUrl(
   // intents and both are present, but the team calendar is the standing
   // reference, not the action for this fixture — so it closes the message,
   // after the roster the volunteers are filling in.
-  const canonicalTeamUrl = club
-    ? buildTeamCalendarUrl(club, squadFor(game, club), WEB_APP_BASE_URL)
-    : null;
+  const canonicalTeamUrl = plan?.team?.canonical ?? null;
   const teamUrl = canonicalTeamUrl ? shortLinks?.team ?? canonicalTeamUrl : null;
   if (teamUrl) {
     // Blank line before the block, the same spacing every other block uses.
@@ -339,6 +561,14 @@ export function MatchesBoard({
   // "DOMINICOS A" must say WHICH one.
   const [selectedSquads, setSelectedSquads] = useState<string[]>([]);
   const [filterHydrated, setFilterHydrated] = useState(false);
+
+  // The short links the link store has already answered for, by match key.
+  //
+  // They are resolved when the board loads, not when Enviar is tapped: the
+  // first share of a season is the one that waits on a cold store, and the
+  // message used to go out with the long canonical URLs when that wait ran
+  // out. See `resolveShortLinksForFixtures`.
+  const [fixtureLinks, setFixtureLinks] = useState<Record<string, FixtureLinks>>({});
 
   const club: ClubType = useMemo(
     () => ({
@@ -405,6 +635,41 @@ export function MatchesBoard({
     document.addEventListener('visibilitychange', refresh);
     return () => document.removeEventListener('visibilitychange', refresh);
   }, []);
+
+  // Resolve the short links of every fixture on the board, in the background.
+  //
+  // The point is the FIRST share: the store has to wake up (cold function,
+  // cold database connection, the link table's own bootstrap) and the Enviar
+  // handler only waits a couple of seconds for the answer. Whichever share
+  // lost that race went out with the long canonical URLs — the club had to
+  // send the convocatoria again to get the short ones. Doing the round trip
+  // here, with nobody waiting for it, takes that race out of the picture.
+  //
+  // A failure here is invisible: the click handler asks the store again, as
+  // it always did.
+  useEffect(() => {
+    if (!matches || matches.length === 0) return;
+    if (competition === undefined || clubCode === undefined) return;
+
+    let cancelled = false;
+    void resolveShortLinksForFixtures(
+      matches,
+      clubName,
+      competition,
+      clubCode,
+      (game) => deriveMatchKey(competition, clubCode, game),
+      (resolved) => {
+        if (cancelled) return;
+        // Each chunk is merged in as it lands, so the fixtures at the top of
+        // the board are ready to be sent long before the whole agenda is.
+        setFixtureLinks((prev) => ({ ...prev, ...resolved }));
+      },
+    );
+
+    return () => {
+      cancelled = true;
+    };
+  }, [matches, clubName, competition, clubCode]);
 
   // Hydrate the persisted squad selection on first mount. Stale squads
   // (not present in the current squad list) are dropped silently per the
@@ -638,7 +903,11 @@ export function MatchesBoard({
                 ) : (
                   <a
                     className={styles.sendWhatsButton}
-                    href={buildWhatsappUrl(row, clubName, competition, clubCode)}
+                    href={buildWhatsappUrl(
+                      row,
+                      clubName,
+                      planLinksFor(row, clubName, competition, clubCode),
+                    )}
                     target="_blank"
                     rel="noopener noreferrer"
                     aria-label={`Compartir ${row.local} vs ${row.visit} por WhatsApp`}
@@ -649,10 +918,11 @@ export function MatchesBoard({
                       // The tab is opened SYNCHRONOUSLY, on the user
                       // gesture, because a browser only allows a popup that
                       // was requested inside the gesture. The short links
-                      // are resolved while the tab sits on about:blank, and
-                      // the tab is pointed at WhatsApp when they arrive (or
-                      // straight away, with the canonical URLs, if they do
-                      // not).
+                      // are usually already in hand (the board resolved them
+                      // when it loaded), so the tab is pointed at WhatsApp
+                      // straight away; when they are not, the tab waits on
+                      // about:blank until they arrive — and the canonical
+                      // URLs go into the message if they never do.
                       const tab = window.open('about:blank', '_blank');
                       const openWhatsapp = (url: string) => {
                         if (tab) {
@@ -660,13 +930,31 @@ export function MatchesBoard({
                         }
                       };
 
-                      void resolveShortLinks(row, clubName, competition, clubCode).then(
-                        (shortLinks) => {
-                          openWhatsapp(
-                            buildWhatsappUrl(row, clubName, competition, clubCode, shortLinks),
-                          );
-                        },
-                      );
+                      const plan = planLinksFor(row, clubName, competition, clubCode);
+
+                      // The links the store already answered for, if the
+                      // board resolved them before the click. They are used
+                      // straight away — no waiting, and no chance of losing
+                      // the race against a slow store on the first share.
+                      const cached = fixtureLinks[matchKey];
+
+                      const compose = (fresh?: ShortLinks) => {
+                        const shortLinks: ShortLinks = {
+                          match: cached?.match ?? fresh?.match,
+                          team: cached?.team ?? fresh?.team,
+                        };
+                        openWhatsapp(buildWhatsappUrl(row, clubName, plan, shortLinks));
+                      };
+
+                      if (cached?.resolved) {
+                        compose();
+                      } else {
+                        // The board could not resolve them (the store was
+                        // unreachable, or the answer was cut short): ask it
+                        // now, exactly as before. If it does not answer in
+                        // time, the canonical URLs go into the message.
+                        void resolveShortLinks(plan).then(compose);
+                      }
 
                       const now = new Date().toISOString();
                       setLocalSent((prev) => ({ ...prev, [matchKey]: now }));

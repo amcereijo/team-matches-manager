@@ -130,9 +130,33 @@ async function ensureLinkSchema(client: Client): Promise<void> {
   `);
 }
 
+/**
+ * The schema bootstrap, ONCE per process.
+ *
+ * `ensureLinkSchema` runs DDL — a `sqlite_master` read, a `CREATE TABLE` and
+ * a `CREATE INDEX` — and every one of those is a round trip to the database.
+ * Running them on every store call made a single share pay for a dozen
+ * pointless round trips, which is what could push the FIRST share of a season
+ * past the time the Enviar handler waits for the store. The schema only has
+ * to exist once per process, so the bootstrap promise is kept and replayed.
+ *
+ * A failed bootstrap is not cached: the next call tries again.
+ */
+let schemaPromise: Promise<void> | null = null;
+
+function ensureLinkSchemaOnce(client: Client): Promise<void> {
+  if (!schemaPromise) {
+    schemaPromise = ensureLinkSchema(client).catch((err) => {
+      schemaPromise = null;
+      throw err;
+    });
+  }
+  return schemaPromise;
+}
+
 async function getStore(): Promise<Client> {
   const client = await getClient();
-  await ensureLinkSchema(client);
+  await ensureLinkSchemaOnce(client);
   return client;
 }
 
